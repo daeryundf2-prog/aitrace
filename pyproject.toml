@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aitrace"
+version = "0.1.0"
+description = "Forensic collection and timeline reporting for AI tool usage on endpoints"
+requires-python = ">=3.12,<3.14"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    "dissect.target[full]==3.25.1",
+    "typer>=0.12",
+    "jinja2>=3.1",
+    "fpdf2>=2.8",
+    "python-docx>=1.1",
+    "pillow>=10",
+    "pypdf>=4",
+    "cramjam>=2.8",
+    "dulwich>=0.22",
+    "tzdata>=2024.1",
+]
+
+[project.scripts]
+aitrace = "aitrace.cli.main:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pypdfium2>=4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aitrace"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -rs"
+markers = ["realdata: reads AI tool stores on the dev host"]

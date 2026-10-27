@@ -145,7 +145,7 @@ def _lnk_details(lnk: Lnk, os_family: OsFamily) -> dict[str, Any]:
 
 
 class Plugin(PluginBase):
-    name = "windows.recycle_lnk_jumplist"
+    name = "recycle_lnk_jumplist"
     version = "1.0"
     description = "Recycle Bin $I records, LNK shortcuts and JumpLists"
 

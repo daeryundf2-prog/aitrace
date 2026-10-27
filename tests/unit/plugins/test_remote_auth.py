@@ -123,6 +123,8 @@ def test_rclone_remote_type_is_kept_and_secrets_dropped() -> None:
 
     syncs = _kind(records, ArtifactKind.CLOUD_SYNC)
     assert [s.data["service"] for s in syncs] == ["drive", "s3"]
+    assert [s.data["account"] for s in syncs] == ["gdrive", "backup"]
+    assert {s.data["extra"]["tool"] for s in syncs} == {"rclone"}
     assert "SECRET" not in json.dumps([s.data for s in syncs])
 
 

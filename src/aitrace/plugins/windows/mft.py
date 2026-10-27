@@ -14,8 +14,9 @@ from dissect.ntfs.mft import MftRecord
 from dissect.ntfs.util import segment_reference
 
 from aitrace.core.catalog import INTERESTING_NAME_PATTERNS, LIMITATIONS
-from aitrace.core.kinds import Actor, ArtifactKind, EventCategory
+from aitrace.core.kinds import Actor, ArtifactKind, EventCategory, OsFamily
 from aitrace.core.model import Artifact, Event, format_utc
+from aitrace.core.paths import normalize
 from aitrace.fs.base import EntryRef, EvidenceFS
 from aitrace.plugins.base import Candidate, ParseContext, PluginBase
 
@@ -193,7 +194,7 @@ def parse_mft_stream(fileobj: BinaryIO, volume: int, *, apply_filter: bool = Tru
             MftRow(
                 entry=rec.entry,
                 seq=rec.seq,
-                path=path,
+                path=normalize(path, OsFamily.WINDOWS),
                 name=name,
                 parent_entry=segment_reference(rec.fn.attr.ParentDirectory),
                 resolved=resolved,

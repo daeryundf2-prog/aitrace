@@ -183,7 +183,7 @@ def _signals(kind: str, data: bytes, filename: str) -> list[tuple[SignalType, st
 
 
 class Plugin(PluginBase):
-    name = "provenance.images"
+    name = "images"
     version = "1.0"
     description = "AI generation signals in image files: PNG/JPEG text, C2PA, XMP, EXIF and file names"
 

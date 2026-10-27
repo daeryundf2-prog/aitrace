@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 
 import pytest
+from dissect.ntfs.exceptions import Error as NtfsError
 
 from aitrace.core.kinds import ArtifactKind, EventCategory, OsFamily
 from aitrace.core.model import Artifact, Event
@@ -100,7 +101,9 @@ def test_plugin_emits_journal_artifacts_and_events() -> None:
     events = [r for r in records if isinstance(r, Event)]
     assert [a.kind for a in artifacts] == [ArtifactKind.FILE_JOURNAL] * 5
     assert artifacts[0].data["source"] == "usn"
-    assert artifacts[0].data["path"] == "new.docx"
+    assert artifacts[0].data["path"] == "/$UNRESOLVED/41/new.docx"
+    assert artifacts[0].data["extra"]["path_resolved"] is False
+    assert artifacts[0].data["extra"]["filename"] == "new.docx"
     assert artifacts[1].data["reasons"] == ["FILE_DELETE", "CLOSE"]
     assert artifacts[0].provenance.record_locator == "usn:0"
     assert [e.category for e in events] == [
@@ -111,6 +114,57 @@ def test_plugin_emits_journal_artifacts_and_events() -> None:
         EventCategory.OTHER,
     ]
     assert events[0].ts_utc is not None and events[0].ts_utc.year == 2021
+
+
+class _FakeRecord:
+    def __init__(self, path: str | None) -> None:
+        self._path = path
+
+    def full_path(self, ignore_dos: bool = False) -> str | None:
+        return self._path
+
+
+class _FakeMft:
+    def __init__(self, dirs: dict[int, str]) -> None:
+        self.dirs = dirs
+        self.calls: list[int] = []
+
+    def get(self, segment: int) -> _FakeRecord:
+        self.calls.append(segment)
+        if segment not in self.dirs:
+            raise NtfsError(f"no record {segment}")
+        return _FakeRecord(self.dirs[segment])
+
+
+class _FakeNtfs:
+    def __init__(self, mft: _FakeMft) -> None:
+        self.mft = mft
+
+
+def test_plugin_resolves_parent_path_through_mft_and_caches() -> None:
+    stream = (_record(0, "doc.txt", 0x100) + _record(96, "other.txt", 0x100)).ljust(4096, b"\x00")
+    mft = _FakeMft({0x29: "/Users/kim"})
+    fs = MemoryFS({USN_PATH: stream}, volume_os=OsFamily.WINDOWS)
+    fs.raw_ntfs = lambda volume: _FakeNtfs(mft)  # type: ignore[method-assign]
+    ctx = ParseContext(fs=fs, evidence_id="ev-1", tz="UTC", log=LOG)
+    records: list[Artifact | Event] = []
+    for cand in PLUGIN.locate(fs):
+        records.extend(PLUGIN.parse(ctx, cand))
+    artifacts = [r for r in records if isinstance(r, Artifact)]
+    assert [a.data["path"] for a in artifacts] == ["/Users/kim/doc.txt", "/Users/kim/other.txt"]
+    assert artifacts[0].data["extra"]["path_resolved"] is True
+    assert artifacts[0].data["extra"]["filename"] == "doc.txt"
+    assert mft.calls == [0x29]
+
+
+def test_plugin_unresolvable_parent_falls_back_to_unresolved_form() -> None:
+    stream = _record(0, "doc.txt", 0x100).ljust(4096, b"\x00")
+    fs = MemoryFS({USN_PATH: stream}, volume_os=OsFamily.WINDOWS)
+    fs.raw_ntfs = lambda volume: _FakeNtfs(_FakeMft({}))  # type: ignore[method-assign]
+    ctx = ParseContext(fs=fs, evidence_id="ev-1", tz="UTC", log=LOG)
+    artifact = next(r for cand in PLUGIN.locate(fs) for r in PLUGIN.parse(ctx, cand) if isinstance(r, Artifact))
+    assert artifact.data["path"] == "/$UNRESOLVED/41/doc.txt"
+    assert artifact.data["extra"]["path_resolved"] is False
 
 
 def test_plugin_all_zero_journal_yields_nothing_and_no_candidate_without_file() -> None:

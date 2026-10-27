@@ -144,7 +144,7 @@ def _decode_records(raw: bytes, version: int) -> tuple[list[_FsRecord], str | No
 
 
 class Plugin(PluginBase):
-    name = "macos.activity"
+    name = "activity"
     version = "1.0"
     description = "macOS quarantine downloads, knowledgeC app usage, TCC grants and FSEvents journals"
 

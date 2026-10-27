@@ -316,7 +316,7 @@ class Plugin(PluginBase):
                 ctx,
                 cand,
                 ArtifactKind.CLOUD_SYNC,
-                {"service": service, "extra": {"remote_name": section}},
+                {"service": service, "account": section, "extra": {"tool": "rclone", "remote_name": section}},
                 locator=f"line:{number}",
             )
             yield artifact

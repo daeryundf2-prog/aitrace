@@ -5,8 +5,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, BinaryIO
 
-from aitrace.core.kinds import Actor, ArtifactKind, EventCategory
+from dissect.ntfs.exceptions import Error as NtfsError
+
+from aitrace.core.kinds import Actor, ArtifactKind, EventCategory, OsFamily
 from aitrace.core.model import Artifact, Event
+from aitrace.core.paths import normalize
 from aitrace.core.time import from_filetime
 from aitrace.fs.base import EntryRef
 from aitrace.plugins.base import Candidate, ParseContext, PluginBase
@@ -153,23 +156,31 @@ class Plugin(PluginBase):
             yield self.warning(ctx, cand, "USN journal stream is not readable")
             return
         errors: list[str] = []
+        mft = _MftDirs(getattr(ctx.fs.raw_ntfs(cand.ref.volume), "mft", None))
         try:
             for rec in parse_usn_stream(stream, errors):
-                yield from self._record(ctx, cand, rec)
+                yield from self._record(ctx, cand, rec, mft)
         finally:
             stream.close()
         for message in errors:
             yield self.warning(ctx, cand, message)
 
-    def _record(self, ctx: ParseContext, cand: Candidate, rec: UsnRecord) -> Iterator[Artifact | Event]:
+    def _record(self, ctx: ParseContext, cand: Candidate, rec: UsnRecord, mft: _MftDirs) -> Iterator[Artifact | Event]:
         ts = from_filetime(rec.timestamp_filetime)
+        parent_segment = rec.parent_ref & 0xFFFFFFFFFFFF
+        parent_dir = mft.directory(parent_segment)
+        if parent_dir is None:
+            path = f"/$UNRESOLVED/{parent_segment}/{rec.filename}"
+        else:
+            path = normalize(f"{parent_dir}/{rec.filename}", OsFamily.WINDOWS)
         data: dict[str, Any] = {
             "source": "usn",
-            "path": rec.filename,
+            "path": path,
             "reasons": list(rec.reasons),
             "extra": {
                 "usn": rec.usn,
                 "filename": rec.filename,
+                "path_resolved": parent_dir is not None,
                 "file_ref": _ref_str(rec.file_ref),
                 "parent_ref": _ref_str(rec.parent_ref),
                 "file_attributes": rec.file_attributes,
@@ -190,6 +201,24 @@ class Plugin(PluginBase):
             subject=rec.filename,
             data={"usn": rec.usn},
         )
+
+
+class _MftDirs:
+    """Cached MFT segment number -> directory path lookup (``mft.get(segment).full_path()``)."""
+
+    def __init__(self, mft: Any | None) -> None:
+        self._mft = mft
+        self._cache: dict[int, str | None] = {}
+
+    def directory(self, segment: int) -> str | None:
+        if self._mft is None:
+            return None
+        if segment not in self._cache:
+            try:
+                self._cache[segment] = self._mft.get(segment).full_path(ignore_dos=True)
+            except (NtfsError, ValueError, OSError, EOFError):
+                self._cache[segment] = None
+        return self._cache[segment]
 
 
 def _raw_usn_stream(fs: Any, volume: int) -> BinaryIO | None:

@@ -293,7 +293,6 @@ class Plugin(PluginBase):
                 "session_id": _str_or_none(rec.get("sessionId")),
                 "role": "user",
                 "text": display,
-                "display": display,
                 "fragment": False,
                 "recovered_from": "jsonl",
             }

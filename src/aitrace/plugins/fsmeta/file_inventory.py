@@ -47,7 +47,7 @@ def _decode_text(raw: bytes, path: str) -> str:
 
 
 class FileInventoryPlugin(PluginBase):
-    name = "fsmeta.file_inventory"
+    name = "file_inventory"
     version = "1.0"
     description = "Per-user file inventory (depth 8) with timestamps, content hashes and text samples"
 

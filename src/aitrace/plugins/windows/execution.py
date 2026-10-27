@@ -140,7 +140,7 @@ def _with_ai_tool(data: dict[str, Any], program: str) -> dict[str, Any]:
 
 
 class Plugin(PluginBase):
-    name = "windows.execution"
+    name = "execution"
     version = "1.0"
     description = "Prefetch, Amcache and SRUM program-execution evidence"
 

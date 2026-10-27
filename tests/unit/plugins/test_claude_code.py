@@ -180,8 +180,8 @@ def test_history_yields_user_messages_with_display() -> None:
     )
     records = _run({f"{HOME}/.claude/history.jsonl": history})
     messages = _kind(records, ArtifactKind.AI_CHAT_MESSAGE)
-    assert [m.data["display"] for m in messages] == ["fix the bug", "second"]
-    assert all(m.data["role"] == "user" and m.data["text"] == m.data["display"] for m in messages)
+    assert [m.data["text"] for m in messages] == ["fix the bug", "second"]
+    assert all(m.data["role"] == "user" and "display" not in m.data for m in messages)
     assert messages[0].data["workspace"] == "/Users/kim/work"
     events = _events(records)
     assert events[0].ts_utc is not None

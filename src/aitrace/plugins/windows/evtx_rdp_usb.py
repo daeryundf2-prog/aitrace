@@ -198,7 +198,7 @@ def _classify(channel: str, event_id: int, rec: dict[str, Any]) -> _Mapped | Non
 
 
 class WindowsEvtxRdpUsbPlugin(PluginBase):
-    name = "windows.evtx_rdp_usb"
+    name = "evtx_rdp_usb"
     version = "1.0"
     description = "Windows event logs (RDP, PowerShell, USB) and setupapi device-install blocks"
 

@@ -163,7 +163,7 @@ def _log_timestamp(line: str, tz: str) -> tuple[datetime, str] | None:
 
 
 class Plugin(PluginBase):
-    name = "ai.desktop_apps"
+    name = "desktop_apps"
     version = "1.0"
     description = "ChatGPT, Claude, Copilot and Perplexity desktop apps: presence, chats, logs, MCP config"
 

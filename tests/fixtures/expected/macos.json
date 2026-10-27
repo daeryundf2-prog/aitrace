@@ -1,0 +1,27 @@
+{
+  "users": [
+    "lee"
+  ],
+  "tools": [
+    "ChatGPT Desktop",
+    "Cursor",
+    "Codex CLI",
+    "Gemini"
+  ],
+  "prompts_contain": [
+    "csv로 바꾸는 파이썬 코드",
+    "이 함수 리팩터링해줘",
+    "IP만 추출하는"
+  ],
+  "deleted_files": [],
+  "exfil": [
+    "198.51.100.7"
+  ],
+  "attributions": {},
+  "vcs_ai_trailers": [
+    "Claude"
+  ],
+  "coverage_contains": [
+    "encrypted_not_decoded"
+  ]
+}

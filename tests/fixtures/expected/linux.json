@@ -1,0 +1,25 @@
+{
+  "users": [
+    "park"
+  ],
+  "tools": [
+    "Claude Code",
+    "Ollama",
+    "Aider"
+  ],
+  "prompts_contain": [
+    "고객 DB를 덤프해서",
+    "dump the database",
+    "로그인 기능 추가해줘"
+  ],
+  "deleted_files": [],
+  "exfil": [
+    "transfer.example.net",
+    "198.51.100.20",
+    "gdrive",
+    "198.51.100.30"
+  ],
+  "attributions": {
+    "/home/park/app/dump.py": "ai_generated"
+  }
+}

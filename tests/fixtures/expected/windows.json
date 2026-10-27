@@ -1,0 +1,32 @@
+{
+  "users": [
+    "kim"
+  ],
+  "tools": [
+    "Claude Code",
+    "ChatGPT",
+    "Claude",
+    "Ollama"
+  ],
+  "prompts_contain": [
+    "경쟁사 제안서를 요약해서",
+    "외부 서버로 몰래 보내는"
+  ],
+  "deleted_files": [
+    "secret_plan.txt",
+    "old_report.docx"
+  ],
+  "exfil": [
+    "203.0.113.10",
+    "rclone",
+    "AnyDesk"
+  ],
+  "attributions": {
+    "/Users/kim/work/proposal.md": "ai_generated",
+    "/Users/kim/work/edited.md": "ai_assisted",
+    "/Users/kim/Downloads/DALL·E 2026-10-01 00.35.00 - a red logo.png": "ai_generated"
+  },
+  "credentials_providers": [
+    "OpenAI"
+  ]
+}

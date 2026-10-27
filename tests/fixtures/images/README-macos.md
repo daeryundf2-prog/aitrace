@@ -17,5 +17,5 @@ and rewrites `tests/fixtures/expected/macos.json`. On a non-macOS host it exits 
 
 ## Artifact
 
-- File: `tests/fixtures/images/macos.E01` (379868 bytes)
-- SHA-256: `3c103a905bcd0e5d0ce70cc12446efc0ad2828bb7f8ee475d2c24450330069ea`
+- File: `tests/fixtures/images/macos.E01` (379982 bytes)
+- SHA-256: `78abe0a49e811d97f666c64e7c1d5238d38e10ce1edae181fa477f2725d1686a`

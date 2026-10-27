@@ -76,6 +76,6 @@ def test_planted_path_exists(target: Target, planted: str) -> None:
 
 def test_planted_prompt_text_is_recoverable(target: Target) -> None:
     conv = json.loads(_read(target, CONV))
-    assert conv["messages"][0]["text"] == "엑셀 데이터를 csv로 바꾸는 파이썬 코드 짜줘"
+    assert conv["mapping"]["u1"]["message"]["content"]["parts"][0] == "엑셀 데이터를 csv로 바꾸는 파이썬 코드 짜줘"
     assert "IP만 추출하는" in _read(target, ROLLOUT)
     assert "rsync -av ~/proj lee@198.51.100.7:/backup" in _read(target, ZSH_HISTORY)

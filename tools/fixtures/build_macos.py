@@ -65,10 +65,33 @@ def populate(stage: Path) -> None:
     t0 = utc("2026-10-02T00:00:00Z")
     conv = {
         "title": "Excel 매크로",
-        "messages": [
-            {"role": "user", "text": "엑셀 데이터를 csv로 바꾸는 파이썬 코드 짜줘", "create_time": t0},
-            {"role": "assistant", "text": "다음 코드를 사용하세요: import csv", "create_time": t0 + 30},
-        ],
+        "create_time": t0,
+        "update_time": t0 + 30,
+        "mapping": {
+            "root": {"id": "root", "message": None, "parent": None, "children": ["u1"]},
+            "u1": {
+                "id": "u1",
+                "parent": "root",
+                "children": ["a1"],
+                "message": {
+                    "id": "u1",
+                    "author": {"role": "user"},
+                    "create_time": t0,
+                    "content": {"content_type": "text", "parts": ["엑셀 데이터를 csv로 바꾸는 파이썬 코드 짜줘"]},
+                },
+            },
+            "a1": {
+                "id": "a1",
+                "parent": "u1",
+                "children": [],
+                "message": {
+                    "id": "a1",
+                    "author": {"role": "assistant"},
+                    "create_time": t0 + 30,
+                    "content": {"content_type": "text", "parts": ["다음 코드를 사용하세요: import csv"]},
+                },
+            },
+        },
     }
     write(chat_root / "conversations-11111111-2222" / "conv1.json", json.dumps(conv, ensure_ascii=False, indent=2))
     write(chat_root / "conversations-v2-11111111-2222" / "abc.data", random.Random(7).randbytes(256))

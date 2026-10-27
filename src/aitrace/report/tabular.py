@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import csv
+import json
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from aitrace.report.model import TIMELINE_COLUMNS, ReportModel
+
+AI_QUERY_COLUMNS: tuple[str, ...] = (
+    "ts_utc",
+    "ts_local",
+    "tool",
+    "session",
+    "role",
+    "actor",
+    "text",
+    "source",
+    "artifact_id",
+    "fragment",
+)
+ATTRIBUTION_COLUMNS: tuple[str, ...] = (
+    "id",
+    "subject",
+    "verdict",
+    "confidence",
+    "band",
+    "rationale",
+    "subject_artifact_ids",
+    "limitations",
+)
+FINDING_COLUMNS: tuple[str, ...] = (
+    "id",
+    "severity",
+    "title",
+    "narrative",
+    "confidence",
+    "band",
+    "rule_id",
+    "artifact_ids",
+    "event_ids",
+    "limitations",
+)
+FINDINGS_COLUMNS: tuple[str, ...] = ("section", *FINDING_COLUMNS)
+
+
+def _cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ";".join(_cell(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
+def _write_csv(path: Path, columns: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> Path:
+    with path.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(columns)
+        for row in rows:
+            writer.writerow([_cell(row.get(column)) for column in columns])
+    return path
+
+
+def _findings_rows(model: ReportModel) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = [{**row, "section": "coverage"} for row in model.coverage["findings"]]
+    rows.extend(
+        {
+            "section": "ai_tools",
+            "id": row["finding_id"],
+            "severity": row["severity"],
+            "title": row["title"],
+            "narrative": row["narrative"],
+        }
+        for row in model.ai_tools
+        if row["kind"] == "usage"
+    )
+    return sorted(rows, key=lambda r: (r["section"], str(r.get("id") or "")))
+
+
+def write_json(model: ReportModel, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(model.to_json() + "\n", encoding="utf-8")
+    return path
+
+
+def write_csvs(model: ReportModel, out_dir: Path) -> list[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tables: list[tuple[str, Sequence[str], Sequence[Mapping[str, Any]]]] = [
+        ("timeline.csv", TIMELINE_COLUMNS, model.timeline),
+        ("ai_queries.csv", AI_QUERY_COLUMNS, model.ai_queries),
+        ("findings.csv", FINDINGS_COLUMNS, _findings_rows(model)),
+        ("attributions.csv", ATTRIBUTION_COLUMNS, model.attribution),
+        ("file_lifecycle.csv", FINDING_COLUMNS, model.file_lifecycle),
+        ("exfil.csv", FINDING_COLUMNS, model.exfil),
+    ]
+    return [_write_csv(out_dir / name, columns, rows) for name, columns, rows in tables]

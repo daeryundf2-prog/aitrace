@@ -9,7 +9,7 @@ import pytest
 
 from aitrace.analyzers.ai_sessions import ANALYZER
 from aitrace.core.ids import make_id
-from aitrace.core.kinds import Actor, ArtifactKind, EventCategory, FindingCategory
+from aitrace.core.kinds import Actor, ArtifactKind, EventCategory, FindingCategory, Severity
 from aitrace.core.model import Artifact, Event, Finding, Provenance
 from aitrace.db.store import CaseStore
 
@@ -122,3 +122,32 @@ def test_prompts_without_session_id_split_after_thirty_minutes(store: CaseStore)
 
     assert len(queries) == 2
     assert [q.data["prompt_count"] for q in queries] == [1, 1]
+
+
+def _good_records() -> list[Artifact | Event]:
+    return _prompt("p1", T0, "write an email summary", "s1")
+
+
+def _bad_records() -> list[Artifact | Event]:
+    base: dict[str, Any] = {"tool": "Claude Code", "session_id": "s1"}
+    return [
+        _art("bad-missing", ArtifactKind.AI_CHAT_MESSAGE, {**base, "text": "no role key"}),
+        _art("bad-type", ArtifactKind.AI_CHAT_MESSAGE, {**base, "role": "user", "text": 123}),
+    ]
+
+
+
+def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
+    store.add(_good_records())
+    baseline = list(ANALYZER.run(store, "UTC"))
+    assert not [f for f in baseline if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+
+    store.add(_bad_records())
+    result = list(ANALYZER.run(store, "UTC"))  # must not raise
+
+    coverage = [f for f in result if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+    assert [item for item in result if item not in coverage] == baseline
+    assert len(coverage) == 1
+    assert coverage[0].severity is Severity.LOW
+    assert coverage[0].title == "ai_sessions: skipped 2 malformed artifacts"
+    assert coverage[0].data["artifact_ids"] == ["bad-missing", "bad-type"]

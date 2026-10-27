@@ -17,6 +17,7 @@ from aitrace.core.kinds import (
     ConfidenceBand,
     EventCategory,
     FindingCategory,
+    Severity,
     SignalType,
     Verdict,
 )
@@ -309,3 +310,32 @@ def test_decide_extra_ai_signals_add_bonus_capped() -> None:
     verdict, conf = decide(sigs)
     assert verdict is Verdict.AI_GENERATED
     assert conf == pytest.approx(0.95)
+
+
+def _good_records() -> list[Artifact | Event]:
+    return _tool_call("w1", "/Users/kim/work/proposal.md", P, T0)
+
+
+def _bad_records() -> list[Artifact | Event]:
+    wrong_type: dict[str, Any] = {"tool": "Claude Code", "call_name": "Write", "input": {}, "file_path": 123}
+    return [
+        _art("bad-missing", ArtifactKind.VCS_COMMIT, {"sha": "abc", "ai_trailer": "Claude"}),
+        _art("bad-type", ArtifactKind.AI_TOOL_CALL, wrong_type),
+    ]
+
+
+
+def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
+    store.add(_good_records())
+    baseline = list(ANALYZER.run(store, "UTC"))
+    assert not [f for f in baseline if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+
+    store.add(_bad_records())
+    result = list(ANALYZER.run(store, "UTC"))  # must not raise
+
+    coverage = [f for f in result if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+    assert [item for item in result if item not in coverage] == baseline
+    assert len(coverage) == 1
+    assert coverage[0].severity is Severity.LOW
+    assert coverage[0].title == "attribution: skipped 2 malformed artifacts"
+    assert coverage[0].data["artifact_ids"] == ["bad-missing", "bad-type"]

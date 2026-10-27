@@ -12,11 +12,11 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aitrace.core.ids import make_id
 from aitrace.core.kinds import ArtifactKind, EventCategory, FindingCategory, OsFamily, Severity, band_for
-from aitrace.core.model import Finding, format_utc
+from aitrace.core.model import Artifact, Finding, format_utc
 from aitrace.core.paths import basename, normalize
 from aitrace.core.time import from_iso
 
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 PROXIMITY_WINDOW = timedelta(minutes=10)
 MIN_BASENAME_LENGTH = 3
+MAX_COVERAGE_IDS = 50
 WRITE_CALLS = frozenset({"write", "edit", "multiedit", "apply_patch"})
 LIFECYCLE_LABELS: dict[EventCategory, str] = {
     EventCategory.FILE_CREATED: "created",
@@ -41,6 +42,44 @@ LINK_CONFIDENCE: dict[str, float] = {
     "time_proximity": 0.3,
 }
 LIMITATION = "Links show association with AI activity, not authorship; time_proximity alone is a weak coincidence."
+
+
+def _opt_str(value: Any) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _malformed(art: Artifact) -> bool:
+    """True when the artifact data violates the Appendix A.10 shape this analyzer relies on."""
+    data = art.data
+    kind = art.kind
+    if kind is ArtifactKind.AI_TOOL_CALL:
+        return not _opt_str(data.get("file_path")) or not _opt_str(data.get("call_name"))
+    if kind is ArtifactKind.AI_CHAT_MESSAGE:
+        return not isinstance(data.get("role"), str) or not isinstance(data.get("text"), str)
+    if kind in (ArtifactKind.BROWSER_DOWNLOAD, ArtifactKind.DOWNLOAD_ORIGIN):
+        return not _opt_str(data.get("target_path"))
+    if kind is ArtifactKind.RECYCLED_FILE:
+        return not isinstance(data.get("original_path"), str) or not isinstance(data.get("deleted_utc"), str)
+    return False
+
+
+def _coverage_finding(analyzer: str, artifact_ids: list[str]) -> Finding:
+    ids = sorted(artifact_ids)[:MAX_COVERAGE_IDS]
+    count = len(artifact_ids)
+    return Finding(
+        id=make_id("finding", "coverage", analyzer, "malformed"),
+        category=FindingCategory.COVERAGE,
+        severity=Severity.LOW,
+        title=f"{analyzer}: skipped {count} malformed artifacts",
+        narrative=f"{count} artifact(s) violated the expected data shape and were excluded from {analyzer} analysis.",
+        artifact_ids=tuple(ids),
+        event_ids=(),
+        confidence=1.0,
+        band=band_for(1.0),
+        rule_id="COVERAGE-MALFORMED",
+        limitations=("Skipped artifacts contributed nothing to this analyzer's results.",),
+        data={"analyzer": analyzer, "skipped_count": count, "artifact_ids": ids},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +164,11 @@ class FileCorrelationAnalyzer:
         writes: defaultdict[str, set[str]] = defaultdict(set)
         downloads: defaultdict[str, set[str]] = defaultdict(set)
         messages: list[_Message] = []
+        skipped: list[str] = []
         for art in store.artifacts():
+            if _malformed(art):
+                skipped.append(art.id)
+                continue
             data = art.data
             if art.kind is ArtifactKind.AI_TOOL_CALL:
                 file_path = data.get("file_path")
@@ -164,6 +207,9 @@ class FileCorrelationAnalyzer:
             if not file.links and not deleted:
                 continue
             yield self._finding(file, deleted)
+
+        if skipped:
+            yield _coverage_finding(self.name, skipped)
 
     @staticmethod
     def _finding(file: _File, deleted: bool) -> Finding:

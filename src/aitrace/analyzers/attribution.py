@@ -55,6 +55,59 @@ _MEDIA_TYPES = frozenset(
     }
 )
 _WORD_RE = re.compile(r"\S+")
+MAX_COVERAGE_IDS = 50
+
+
+def _is_str(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def _opt_str(value: Any) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _malformed(art: Artifact) -> bool:
+    """True when the artifact data violates the Appendix A.10 shape this analyzer relies on."""
+    data = art.data
+    kind = art.kind
+    if kind is ArtifactKind.FILE_RECORD:
+        return not _is_str(data.get("path")) or not _opt_str(data.get("text_sample"))
+    if kind is ArtifactKind.AI_TOOL_CALL:
+        return not _opt_str(data.get("file_path")) or not _opt_str(data.get("call_name"))
+    if kind is ArtifactKind.MEDIA_PROVENANCE:
+        signals = data.get("signals", [])
+        return not _is_str(data.get("path")) or not (
+            isinstance(signals, list) and all(isinstance(s, dict) for s in signals)
+        )
+    if kind is ArtifactKind.DOC_METADATA:
+        hints = data.get("hints")
+        return not _is_str(data.get("path")) or not (
+            hints is None or (isinstance(hints, list) and all(isinstance(h, dict) for h in hints))
+        )
+    if kind is ArtifactKind.VCS_COMMIT:
+        return not _is_str(data.get("repo_path")) or not _is_str(data.get("sha"))
+    if kind in (ArtifactKind.BROWSER_DOWNLOAD, ArtifactKind.DOWNLOAD_ORIGIN):
+        return not _opt_str(data.get("target_path")) or not _opt_str(data.get("ai_service"))
+    return False
+
+
+def _coverage_finding(analyzer: str, artifact_ids: list[str]) -> Finding:
+    ids = sorted(artifact_ids)[:MAX_COVERAGE_IDS]
+    count = len(artifact_ids)
+    return Finding(
+        id=make_id("finding", "coverage", analyzer, "malformed"),
+        category=FindingCategory.COVERAGE,
+        severity=Severity.LOW,
+        title=f"{analyzer}: skipped {count} malformed artifacts",
+        narrative=f"{count} artifact(s) violated the expected data shape and were excluded from {analyzer} analysis.",
+        artifact_ids=tuple(ids),
+        event_ids=(),
+        confidence=1.0,
+        band=band_for(1.0),
+        rule_id="COVERAGE-MALFORMED",
+        limitations=("Skipped artifacts contributed nothing to this analyzer's results.",),
+        data={"analyzer": analyzer, "skipped_count": count, "artifact_ids": ids},
+    )
 
 
 @dataclass(slots=True)
@@ -164,6 +217,7 @@ class AttributionAnalyzer:
         writes: dict[str, list[_ToolWrite]] = {}
         assistant_texts: list[tuple[str, frozenset[tuple[str, ...]]]] = []
         ai_times: list[datetime] = []
+        skipped: list[str] = []
 
         ts_by_artifact: dict[str, datetime] = {}
         for event in store.events():
@@ -178,6 +232,9 @@ class AttributionAnalyzer:
             return subjects.setdefault(key, _Subject(path=path))
 
         for art in store.artifacts():
+            if _malformed(art):
+                skipped.append(art.id)
+                continue
             data = art.data
             kind = art.kind
             if kind is ArtifactKind.FILE_RECORD:
@@ -229,6 +286,9 @@ class AttributionAnalyzer:
             attribution = self._attribute(subj)
             yield attribution
             yield self._finding(attribution)
+
+        if skipped:
+            yield _coverage_finding(self.name, skipped)
 
     @staticmethod
     def _collect_file_record(art: Artifact, files: dict[str, _FileInfo]) -> None:

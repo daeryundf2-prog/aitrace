@@ -197,3 +197,36 @@ def test_recycled_file_counts_as_deleted(store: CaseStore) -> None:
     finding = _by_path(store)[SCRATCH]
     assert finding.severity is Severity.LOW
     assert [step["event"] for step in finding.data["lifecycle"]] == ["recycled"]
+
+
+def _good_records() -> list[Artifact | Event]:
+    return [
+        *_write_call("w1", DOC, T0),
+        *_file_event("c1", EventCategory.FILE_CREATED, DOC, T0 + timedelta(seconds=5)),
+    ]
+
+
+def _bad_records() -> list[Artifact | Event]:
+    wrong_type: dict[str, Any] = {"tool": "Claude Code", "call_name": "Write", "input": {}, "file_path": 123}
+    missing_key: dict[str, Any] = {"original_path": SCRATCH, "size": 1}
+    return [
+        _art("bad-type", ArtifactKind.AI_TOOL_CALL, wrong_type),
+        _art("bad-missing", ArtifactKind.RECYCLED_FILE, missing_key),
+    ]
+
+
+
+def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
+    store.add(_good_records())
+    baseline = list(ANALYZER.run(store, "UTC"))
+    assert not [f for f in baseline if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+
+    store.add(_bad_records())
+    result = list(ANALYZER.run(store, "UTC"))  # must not raise
+
+    coverage = [f for f in result if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+    assert [item for item in result if item not in coverage] == baseline
+    assert len(coverage) == 1
+    assert coverage[0].severity is Severity.LOW
+    assert coverage[0].title == "file_correlation: skipped 2 malformed artifacts"
+    assert coverage[0].data["artifact_ids"] == ["bad-missing", "bad-type"]

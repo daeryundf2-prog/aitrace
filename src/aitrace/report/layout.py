@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
-from aitrace.report.i18n import t
+from aitrace.report.i18n import STRINGS, t
 from aitrace.report.model import (
     ATTRIBUTIONS_CSV_PATH,
     COLUMNS,
@@ -935,6 +935,27 @@ def question_clean_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, 
     return rows
 
 
+def _channel_label(channel: str, lang: str) -> str:
+    key = f"q.ch.{channel or '-'}"
+    return t(key, lang) if key in STRINGS else channel
+
+
+def question_channel_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, str, str]]:
+    human = [
+        (t("q.route.human", lang), _channel_label(ch if ch != "-" else "", lang), f"{int(n):,}")
+        for ch, n in (stats.get("by_channel") or {}).items()
+    ]
+    ai = [
+        (t("q.route.ai", lang), _channel_label(ch, lang), f"{int(n):,}")
+        for ch, n in (stats.get("ai_by_channel") or {}).items()
+    ]
+    return human + ai
+
+
+def question_length_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, str]]:
+    return [(t(f"q.len.{name}", lang), f"{int(n):,}") for name, n in (stats.get("by_length") or {}).items()]
+
+
 QUESTION_LOOP_HEADERS = (
     "q.col_prefix",
     "q.col_count",
@@ -1038,6 +1059,23 @@ def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, 
         (7, 2),
         caption=t("q.clean_title", lang),
     )
+    channels = question_channel_rows(stats, lang)
+    if channels:
+        b.table(
+            (t("q.col_route", lang), t("q.col_channel", lang), t("q.col_count", lang)),
+            channels,
+            (4, 5, 2),
+            caption=t("q.channel_title", lang),
+        )
+        b.para(t("q.channel_note", lang))
+    lengths = question_length_rows(stats, lang)
+    if model.questions and lengths:
+        b.table(
+            (t("q.col_item", lang), t("q.col_count", lang)),
+            lengths,
+            (7, 2),
+            caption=t("q.length_title", lang),
+        )
     loops = question_loop_rows(stats)
     if loops:
         b.table(

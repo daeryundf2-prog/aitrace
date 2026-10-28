@@ -31,6 +31,7 @@ LAYOUT = (
     "report/csv/timeline.csv",
     "report/csv/ai_queries.csv",
     "report/csv/questions.csv",
+    "report/csv/ai_sent_inputs.csv",
     "report/csv/findings.csv",
     "report/csv/attributions.csv",
     "report/csv/file_lifecycle.csv",

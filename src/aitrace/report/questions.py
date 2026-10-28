@@ -17,7 +17,28 @@ from typing import Any
 from aitrace.core import catalog
 
 HUMAN = "human"
-EXCLUDED_KINDS: tuple[str, ...] = ("compaction", "system_notice", "a2a", "automated", "loop", "empty")
+EXCLUDED_KINDS: tuple[str, ...] = (
+    "compaction",
+    "system_notice",
+    "a2a",
+    "subagent",
+    "automated",
+    "loop",
+    "empty",
+)
+# Input channels recorded by the agent: these carry text another program or agent wrote, never a person.
+AGENT_CHANNELS: dict[str, str] = {
+    "a2a": "a2a",
+    "subagent": "subagent",
+    "kanban": "automated",
+    "oneshot": "automated",
+    "api_server": "automated",
+    "cron": "automated",
+}
+_A2A_HEADER = re.compile(r"^\s*\[A2A (?:inbound|outbound)[^\]]*\]\s*")
+_A2A_PEER = re.compile(r"remote agent peer named '([^']+)'")
+_A2A_ARROW = re.compile(r"\[([^\]\n]{1,40}?)\s*(?:→|->)\s*([^\]\n]{1,40})\]")
+LENGTH_BUCKETS: tuple[tuple[str, int], ...] = (("le5", 5), ("le20", 20), ("le1000", 1000), ("gt1000", 10**12))
 # A scheduled job or batch script sends the same long instruction once per fresh session; a person who resends
 # a message does so inside one session. Text this long, opening identically in this many different sessions,
 # and alone in its session this often, is counted as an automated loop rather than a typed question.
@@ -72,7 +93,7 @@ def machine_of(source: str, tool: str | None = None) -> str:
     name = _basename(source)
     match = _EXPORT_NAME.match(name)
     if match:
-        return match.group("machine").replace("_", " ")
+        return match.group("machine")
     return tool or name
 
 
@@ -137,18 +158,26 @@ def build_questions(
     raw = 0
     excluded: Counter[str] = Counter()
     kept: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    ai_inputs: list[dict[str, Any]] = []
     for row in ai_queries:
         if row.get("role") != "user":
             continue
         raw += 1
         source = str(row.get("source") or "")
+        info = meta.get(str(row.get("artifact_id"))) or {}
+        recorded_channel = str(info.get("channel") or "")
+        if recorded_channel in AGENT_CHANNELS:
+            excluded[AGENT_CHANNELS[recorded_channel]] += 1
+            ai_inputs.append(_ai_input(row, info, source, recorded_channel))
+            continue
         kind, text, platform, attachment = normalise(str(row.get("text") or ""), source)
         if kind != HUMAN:
             excluded[kind] += 1
+            if kind == "a2a":
+                ai_inputs.append(_ai_input(row, info, source, recorded_channel or "a2a"))
             continue
-        info = meta.get(str(row.get("artifact_id"))) or {}
         machine = str(info.get("machine") or machine_of(source, row.get("tool")) or "-")
-        channel = platform or (str(info["channel"]) if info.get("channel") else "")
+        channel = platform or recorded_channel
         key = (machine, str(row.get("session") or ""), str(row.get("ts_utc") or ""), text)
         found = kept.get(key)
         if found is not None:
@@ -183,6 +212,12 @@ def build_questions(
         "human": len(questions),
         "attachments": sum(1 for q in questions if q["attachment"]),
         "by_month": _by_month(questions),
+        "by_length": _by_length(questions),
+        "ai_inputs": sorted(
+            ai_inputs, key=lambda a: (a["ts_utc"] is None, str(a["ts_utc"] or ""), a["machine"])
+        ),
+        "ai_by_channel": dict(Counter(a["channel"] for a in ai_inputs).most_common()),
+        "by_channel": dict(Counter(str(q["channel"]) or "-" for q in questions).most_common()),
         "topics": dict(Counter(topic for q in questions for topic in q["topics"]).most_common()),
     }
     return questions, stats
@@ -218,6 +253,33 @@ def _split_loops(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list
         )
     loops.sort(key=lambda loop: (-int(loop["count"]), str(loop["prefix"])))
     return [q for q in rows if id(q) not in looped], loops
+
+
+def _ai_input(row: Mapping[str, Any], info: Mapping[str, Any], source: str, channel: str) -> dict[str, Any]:
+    text = str(row.get("text") or "")
+    peer = _A2A_PEER.search(text)
+    arrow = _A2A_ARROW.search(text[:300])
+    sender = peer.group(1) if peer else arrow.group(1).strip() if arrow else ""
+    local = str(row.get("ts_local") or "")
+    return {
+        "ts_utc": row.get("ts_utc"),
+        "ts_local": row.get("ts_local"),
+        "date": local[:10] if local else "",
+        "machine": str(info.get("machine") or machine_of(source, row.get("tool")) or "-"),
+        "channel": channel,
+        "sender": sender,
+        "session": row.get("session"),
+        "text": _A2A_HEADER.sub("", text).strip(),
+        "source": source,
+    }
+
+
+def _by_length(questions: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts = dict.fromkeys((name for name, _ in LENGTH_BUCKETS), 0)
+    for q in questions:
+        size = len(str(q["text"]))
+        counts[next(name for name, limit in LENGTH_BUCKETS if size <= limit)] += 1
+    return counts
 
 
 def _by_month(questions: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:

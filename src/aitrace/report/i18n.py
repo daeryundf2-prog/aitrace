@@ -391,21 +391,11 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "flag.TASK-IMAGE": ("이미지", "Images"),
     "flag.TASK-DATA": ("데이터·표 분석", "Data and tables"),
     "flag.TASK-SEARCH": ("검색·조회", "Search and lookup"),
-    "q.title": ("사용자 직접 질의 목록", "Questions Typed by the User"),
-    "q.section": ("사용자 직접 질의", "Questions Typed by the User"),
+    "q.title": ("사용자 직접 입력 목록", "Inputs Typed by the User"),
+    "q.section": ("사용자 직접 입력", "Inputs Typed by the User"),
     "q.intro": (
-        (
-            "이 별책은 AI 도구에 사람이 직접 입력한 질의만 모아 일자순으로 정리한 것임. 대화 기록에 사용자 역할로 저장되었으나 "
-            "사람이 입력하지 않은 기록(대화 압축 요약, 시스템·게이트웨이 알림, 에이전트 간 메시지, 예약 작업 지시)은 제외하였고, "
-            "메신저 게이트웨이가 덧붙인 안내 문구는 지우고 입력 내용만 남겼음. 같은 시각에 같은 내용으로 두 번 이상 기록된 질의는 "
-            "한 건으로 합쳤음. 같은 목록을 {csv}에도 수록하였음."
-        ),
-        (
-            "This volume lists only the questions a person typed into the AI tools, by date. Records stored with the user "
-            "role that no person typed (context-compaction summaries, system and gateway notices, agent-to-agent messages, "
-            "scheduled job prompts) are excluded, gateway framing text is removed so only the typed text remains, and a "
-            "question recorded more than once at the same time with the same text is counted once. The same list is in {csv}."
-        ),
+        "이 별책은 AI 도구에 사람이 직접 입력한 메시지만 모아 일자순으로 정리한 것임. 대화 기록에 사용자 역할로 저장되었으나 사람이 입력하지 않은 기록(다른 기기 에이전트나 상위 AI가 보낸 작업 지시, 대화 압축 요약, 시스템·게이트웨이 알림, 예약 작업·자동 반복 지시)은 입력 경로(채널)와 내용 기준으로 제외하였고, 메신저 게이트웨이가 덧붙인 안내 문구는 지우고 입력 내용만 남겼음. 같은 시각에 같은 내용으로 두 번 이상 기록된 입력은 한 건으로 합쳤음. 같은 목록을 {csv}에도 수록하였음.",
+        "This volume lists only the messages a person typed into the AI tools, by date. Records stored with the user role that no person typed (instructions sent by agents on other machines or by a parent AI, context-compaction summaries, system and gateway notices, scheduled and automatically repeated prompts) are excluded by input channel and content, and gateway framing text is removed. A message recorded more than once at the same time with the same text is counted once. The same list is in {csv}.",
     ),
     "q.clean_title": ("정제 기준 및 결과", "Cleaning Rules and Result"),
     "q.col_item": ("구분", "Item"),
@@ -413,8 +403,14 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "q.raw": ("사용자 역할로 기록된 전체 메시지", "All messages recorded with the user role"),
     "q.ex.compaction": ("제외: 대화 압축 요약(에이전트 생성)", "Excluded: context-compaction summaries"),
     "q.ex.system_notice": ("제외: 시스템·게이트웨이 알림", "Excluded: system and gateway notices"),
-    "q.ex.a2a": ("제외: 에이전트 간(A2A) 메시지", "Excluded: agent-to-agent (A2A) messages"),
-    "q.ex.automated": ("제외: 예약 작업·칸반 자동 지시", "Excluded: scheduled job and kanban prompts"),
+    "q.ex.a2a": (
+        "제외: 다른 기기 에이전트가 보낸 메시지(A2A)",
+        "Excluded: messages sent by an agent on another machine (A2A)",
+    ),
+    "q.ex.automated": (
+        "제외: 예약 작업·칸반·API 등 자동 지시",
+        "Excluded: scheduled job, kanban and API prompts",
+    ),
     "q.ex.empty": ("제외: 정리 후 내용 없음", "Excluded: empty after cleaning"),
     "q.ex.loop": (
         "제외: 자동 반복 실행 지시(루프 추정)",
@@ -424,7 +420,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "q.loop_note": (
         (
             "같은 지시문(100자 이상, 앞 50자 기준)이 서로 다른 세션 5개 이상에서 반복되고 그중 80% 이상이 세션의 유일한 입력인 경우, "
-            "예약 작업이나 일괄 처리 스크립트가 보낸 것으로 보고 사람의 직접 질의에서 제외하였음. 같은 내용을 한 세션 안에서 "
+            "예약 작업이나 일괄 처리 스크립트가 보낸 것으로 보고 사람이 직접 입력한 메시지에서 제외하였음. 같은 내용을 한 세션 안에서 "
             "다시 보낸 경우는 사람의 재전송으로 보고 제외하지 않았음."
         ),
         (
@@ -438,50 +434,82 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "q.col_machine": ("머신", "Machine"),
     "q.col_period": ("기간", "Period"),
     "q.col_clock": ("가장 잦은 시각(건수)", "Most frequent time (count)"),
+    "q.ex.subagent": (
+        "제외: 상위 AI가 서브에이전트에 맡긴 작업",
+        "Excluded: tasks a parent AI handed to a subagent",
+    ),
+    "q.length_title": ("입력 길이별 구분", "Inputs by Length"),
+    "q.len.le5": (
+        "5자 이하(승인·선택 응답, 예: 진행, 1, 확인)",
+        "Up to 5 characters (approvals and choices)",
+    ),
+    "q.len.le20": ("6~20자(짧은 지시·질문)", "6 to 20 characters (short instructions and questions)"),
+    "q.len.le1000": ("21~1,000자(질문·지시)", "21 to 1,000 characters (questions and instructions)"),
+    "q.len.gt1000": (
+        "1,000자 초과(붙여 넣은 로그·문서 등)",
+        "Over 1,000 characters (pasted logs, documents)",
+    ),
+    "q.channel_title": ("입력 경로(채널)별 건수", "Inputs by Channel"),
+    "q.col_channel": ("입력 경로", "Channel"),
+    "q.channel_note": (
+        "입력 경로는 원본 기록의 채널 값이며, a2a·subagent·kanban·oneshot·api_server 경로로 들어온 메시지는 다른 기기의 에이전트, 상위 AI 또는 프로그램이 보낸 것이므로 사람이 직접 입력한 메시지에서 제외하였음.",
+        "The channel is the input route recorded in the source; messages that came in by a2a, subagent, kanban, oneshot or api_server were sent by another machine's agent, a parent AI or a program and are excluded from the person's own inputs.",
+    ),
+    "q.ch.telegram": ("텔레그램", "Telegram"),
+    "q.ch.desktop": ("데스크톱 앱", "Desktop app"),
+    "q.ch.cli": ("터미널(CLI)", "Terminal (CLI)"),
+    "q.ch.-": ("기록 없음", "Not recorded"),
+    "q.ai_title": (
+        "다른 에이전트·상위 AI·프로그램이 보낸 입력(사람 아님)",
+        "Inputs Sent by Other Agents, a Parent AI or Programs (Not a Person)",
+    ),
+    "q.ai_intro": (
+        "아래는 대화 기록에 사용자 역할로 저장되었으나 입력 경로(a2a·subagent·kanban·oneshot·api_server) 또는 A2A 머리말로 보아 다른 기기의 에이전트, 상위 AI 또는 프로그램이 보낸 메시지 {n}건임. 수신은 메시지가 기록된 기기, 발신은 원본에 적힌 발신 에이전트 표기(이름 또는 IP)를 그대로 옮긴 것임. 같은 목록을 {csv}에도 수록하였음.",
+        "Below are {n} messages stored with the user role that, by input channel (a2a, subagent, kanban, oneshot, api_server) or A2A header, were sent by another machine's agent, a parent AI or a program. 'To' is the machine that recorded the message and 'from' is the sender label as written in the source (name or IP). The same list is in {csv}.",
+    ),
+    "q.ai_meta_to": ("수신 {machine}", "to {machine}"),
+    "q.ai_meta_from": ("발신 {sender}", "from {sender}"),
+    "q.col_route": ("구분", "Kind"),
+    "q.route.human": ("사람 직접 입력", "Typed by a person"),
+    "q.route.ai": ("AI·프로그램 입력(제외)", "Sent by AI or a program (excluded)"),
+    "q.ch.a2a": ("다른 기기 에이전트(a2a)", "Agent on another machine (a2a)"),
+    "q.ch.subagent": ("서브에이전트(subagent)", "Subagent"),
+    "q.ch.kanban": ("칸반(kanban)", "Kanban"),
+    "q.ch.oneshot": ("일회 실행(oneshot)", "One-shot run"),
+    "q.ch.api_server": ("API 서버(api_server)", "API server"),
+    "q.ch.cron": ("예약 작업(cron)", "Scheduled job"),
     "q.dup": ("같은 시각·같은 내용 중복 기록(한 건으로 합침)", "Duplicate records merged into one"),
-    "q.human": ("사람이 직접 입력한 질의", "Questions typed by a person"),
-    "q.attachments": ("그중 파일·이미지 첨부가 있는 질의", "Of which with an attached file or image"),
-    "q.period_title": ("월별·머신별 질의 건수", "Questions by Month and Machine"),
+    "q.human": ("사람이 직접 입력한 메시지", "Messages typed by a person"),
+    "q.attachments": ("그중 파일·이미지 첨부가 있는 입력", "Of which with an attached file or image"),
+    "q.period_title": ("월별·머신별 입력 건수", "Inputs by Month and Machine"),
     "q.col_month": ("월", "Month"),
     "q.col_total": ("합계", "Total"),
-    "q.topic_title": ("질의 내용 분류(키워드 기준)", "Question Topics (Keyword-Based)"),
+    "q.topic_title": ("입력 내용 분류(키워드 기준)", "Input Topics (Keyword-Based)"),
     "q.topic_note": (
-        "분류는 키워드 일치 기준이며 한 질의가 여러 분류에 해당할 수 있고, 질의의 의도를 판정한 것은 아님.",
+        "분류는 키워드 일치 기준이며 한 입력이 여러 분류에 해당할 수 있고, 입력의 의도를 판정한 것은 아님.",
         "Topics are keyword matches; a question can fall under several topics, and no intent is inferred.",
     ),
     "q.col_topic": ("분류", "Topic"),
-    "q.col_example": ("예시(최초 질의)", "Example (earliest question)"),
+    "q.col_example": ("예시(최초 입력)", "Example (earliest input)"),
     "q.days_title": ("일자별 목차", "Dates"),
-    "q.list_title": ("질의 전문", "Full Questions"),
+    "q.list_title": ("입력 전문", "Full Inputs"),
     "q.day": ("{date} ({n}건)", "{date} ({n})"),
     "q.undated": ("일시 미상", "Undated"),
     "q.meta_dup": ("같은 내용 {n}건 추가 기록", "{n} more identical record(s)"),
     "q.meta_attach": ("첨부 있음", "with attachment"),
-    "q.none": ("사람이 직접 입력한 질의는 확인되지 않음.", "No questions typed by a person were found."),
+    "q.none": ("사람이 직접 입력한 메시지는 확인되지 않음.", "No messages typed by a person were found."),
     "q.ch3_intro": (
-        (
-            "사용자 역할로 기록된 메시지 {raw}건 중 사람이 직접 입력한 질의는 {human}건으로 확인됨. 정제 기준과 건수는 아래 표와 같으며, "
-            "질의 전문은 별책({volume})과 {csv}에 일자순으로 수록하였음."
-        ),
-        (
-            "Of {raw} message(s) recorded with the user role, {human} are questions typed by a person. The cleaning rules "
-            "and counts are below; the full questions are in the companion volume ({volume}) and {csv}, by date."
-        ),
+        "사용자 역할로 기록된 메시지 {raw}건 중 사람이 직접 입력한 메시지는 {human}건으로 확인됨. 정제 기준과 건수는 아래 표와 같으며, 입력 전문은 별책({volume})과 {csv}에 일자순으로 수록하였음.",
+        "Of {raw} message(s) recorded with the user role, {human} were typed by a person. The cleaning rules and counts are below; the full inputs are in the companion volume ({volume}) and {csv}, by date.",
     ),
-    "q.ch3_excerpt": ("질의 발췌", "Question Excerpts"),
+    "q.ch3_excerpt": ("입력 발췌", "Input Excerpts"),
     "q.ch3_excerpt_note": (
-        (
-            "아래는 분류 표지(보안 우회·유출)가 붙은 질의와 각 일자의 첫 질의를 시간순으로 {n}건 발췌한 것이며, "
-            "각 질의는 앞 {chars}자까지 표시하였음."
-        ),
-        (
-            "Below are {n} questions in time order: those flagged (security bypass, exfiltration) and the first question "
-            "of each date, each shown up to {chars} characters."
-        ),
+        "아래는 분류 표지(보안 우회·유출)가 붙은 입력과 각 일자의 첫 입력을 시간순으로 {n}건 발췌한 것이며, 각 입력은 앞 {chars}자까지 표시하였음.",
+        "Below are {n} inputs in time order: those flagged (security bypass, exfiltration) and the first input of each date, each shown up to {chars} characters.",
     ),
     "q.col_time": ("일시(현지)", "Time (local)"),
     "q.col_where": ("머신·채널", "Machine / channel"),
-    "q.col_text": ("질의", "Question"),
+    "q.col_text": ("입력 내용", "Input"),
     "ai.note_all": (
         "AI 응답 {a}건, 도구 실행 {c}건을 모두 표시하였음.",
         "All {a} AI response(s) and {c} tool call(s) are shown.",

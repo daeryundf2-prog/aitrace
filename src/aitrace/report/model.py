@@ -149,6 +149,7 @@ PROMPTS_VOLUME_PATH = "report/prompts.html"
 AI_QUERIES_CSV_PATH = "report/csv/ai_queries.csv"
 QUESTIONS_VOLUME_PATH = "report/questions.html"
 QUESTIONS_CSV_PATH = "report/csv/questions.csv"
+AI_INPUTS_CSV_PATH = "report/csv/ai_sent_inputs.csv"
 QUESTION_EXCERPT_CAP = (
     120  # chapter 3 question rows: flagged ones first, then the first question of each date
 )
@@ -803,7 +804,12 @@ def _query_meta(
     sensitive = [(rule, pattern) for rule, pattern in catalog.TASK_RULES if rule in SENSITIVE_TASKS]
     meta: dict[str, dict[str, Any]] = {}
     for a in messages:
-        entry: dict[str, Any] = {"machine": a.data.get("machine"), "channel": a.data.get("channel")}
+        raw_extra = a.data.get("extra")
+        msg_extra: Mapping[str, Any] = raw_extra if isinstance(raw_extra, Mapping) else {}
+        entry: dict[str, Any] = {
+            "machine": a.data.get("machine") or msg_extra.get("machine"),
+            "channel": a.data.get("channel") or msg_extra.get("channel"),
+        }
         if a.data.get("role") == "user":
             text = " ".join(str(a.data.get("text", "")).split())
             entry["flags"] = [rule for rule, pattern in sensitive if pattern.search(text)]

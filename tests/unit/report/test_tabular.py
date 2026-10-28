@@ -23,6 +23,7 @@ CSV_NAMES = (
     "timeline.csv",
     "ai_queries.csv",
     "questions.csv",
+    "ai_sent_inputs.csv",
     "findings.csv",
     "attributions.csv",
     "file_lifecycle.csv",

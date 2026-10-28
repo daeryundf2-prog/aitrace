@@ -24,6 +24,7 @@ QUESTION_COLUMNS: tuple[str, ...] = (
     "text",
     "source",
 )
+AI_INPUT_COLUMNS: tuple[str, ...] = ("ts_local", "machine", "channel", "sender", "session", "text", "source")
 AI_QUERY_COLUMNS: tuple[str, ...] = (
     "ts_utc",
     "ts_local",
@@ -117,6 +118,11 @@ def write_csvs(model: ReportModel, out_dir: Path) -> list[Path]:
         ("timeline.csv", TIMELINE_COLUMNS, model.timeline),
         ("ai_queries.csv", AI_QUERY_COLUMNS, model.ai_queries),
         ("questions.csv", QUESTION_COLUMNS, [_excel_question(q) for q in model.questions]),
+        (
+            "ai_sent_inputs.csv",
+            AI_INPUT_COLUMNS,
+            [_excel_question(a) for a in model.question_stats.get("ai_inputs") or ()],
+        ),
         ("findings.csv", FINDINGS_COLUMNS, _findings_rows(model)),
         ("attributions.csv", ATTRIBUTION_COLUMNS, model.attribution),
         ("file_lifecycle.csv", FINDING_COLUMNS, model.file_lifecycle),

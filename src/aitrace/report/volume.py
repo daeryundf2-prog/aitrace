@@ -17,13 +17,15 @@ from aitrace.report.i18n import DEFAULT_LANG, SUPPORTED_LANGS, t
 from aitrace.report.layout import (
     QUESTION_LOOP_HEADERS,
     machine_label,
+    question_channel_rows,
     question_clean_rows,
+    question_length_rows,
     question_loop_rows,
     question_month_table,
     question_topic_rows,
     tool_label,
 )
-from aitrace.report.model import QUESTIONS_CSV_PATH, ReportModel
+from aitrace.report.model import AI_INPUTS_CSV_PATH, QUESTIONS_CSV_PATH, ReportModel
 
 _EXTRA_CSS = """
 nav.toc p.l3 { padding-left: 16mm; }
@@ -189,6 +191,28 @@ def _question(q: Mapping[str, Any], lang: str) -> str:
     return f'<div class="entry"><p class="meta">{escape(meta)}</p><pre>{escape(str(q.get("text") or ""))}</pre></div>\n'
 
 
+def _ai_inputs(rows: Sequence[Mapping[str, Any]], lang: str) -> Iterator[str]:
+    if not rows:
+        return
+    yield f'<section class="tool">\n<h2 id="ai-inputs">{escape(t("q.ai_title", lang))}</h2>\n'
+    yield f"<p>{escape(t('q.ai_intro', lang, n=f'{len(rows):,}', csv=AI_INPUTS_CSV_PATH))}</p>\n"
+    day = None
+    for row in rows:
+        if row.get("date") != day:
+            day = row.get("date")
+            yield f'<h3 class="machine">{escape(str(day or t("q.undated", lang)))}</h3>\n'
+        parts = [
+            str(row.get("ts_local") or "-")[11:] or "-",
+            t("q.ai_meta_to", lang, machine=row.get("machine") or "-"),
+            str(row.get("channel") or ""),
+        ]
+        if row.get("sender"):
+            parts.append(t("q.ai_meta_from", lang, sender=row["sender"]))
+        meta = " \u00b7 ".join(p for p in parts if p)
+        yield f'<div class="entry"><p class="meta">{escape(meta)}</p><pre>{escape(str(row.get("text") or ""))}</pre></div>\n'
+    yield "</section>\n"
+
+
 def render_questions_volume(model: ReportModel, out_path: Path | str) -> Path:
     lang = str(model.case.get("lang") or DEFAULT_LANG)
     if lang not in SUPPORTED_LANGS:
@@ -227,6 +251,23 @@ def render_questions_volume(model: ReportModel, out_path: Path | str) -> Path:
                 t("q.clean_title", lang),
             )
         )
+        channels = question_channel_rows(stats, lang)
+        if channels:
+            fh.write(f"<h2>{escape(t('q.channel_title', lang))}</h2>\n")
+            fh.write(
+                _table(
+                    (t("q.col_route", lang), t("q.col_channel", lang), t("q.col_count", lang)),
+                    channels,
+                    t("q.channel_title", lang),
+                )
+            )
+            fh.write(f"<p>{escape(t('q.channel_note', lang))}</p>\n")
+        lengths = question_length_rows(stats, lang)
+        if model.questions and lengths:
+            fh.write(f"<h2>{escape(t('q.length_title', lang))}</h2>\n")
+            fh.write(
+                _table((t("q.col_item", lang), t("q.col_count", lang)), lengths, t("q.length_title", lang))
+            )
         loops = question_loop_rows(stats)
         if loops:
             fh.write(f"<h2>{escape(t('q.loop_title', lang))}</h2>\n")
@@ -260,6 +301,7 @@ def render_questions_volume(model: ReportModel, out_path: Path | str) -> Path:
             label = t("q.day", lang, date=day or t("q.undated", lang), n=len(items))
             fh.write(f'<h3 class="machine" id="{anchors[day]}">{escape(label)}</h3>\n')
             fh.writelines(_question(q, lang) for q in items)
+        fh.writelines(_ai_inputs(stats.get("ai_inputs") or [], lang))
         fh.write("</div>\n</body>\n</html>\n")
     return path
 

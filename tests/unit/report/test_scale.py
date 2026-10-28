@@ -128,8 +128,8 @@ def big() -> ReportModel:
 
 
 def test_question_excerpts_are_capped_and_keep_flagged_questions(big: ReportModel) -> None:
-    blocks = _section(build_document(big), 2, "사용자 직접 질의")
-    rows = [row for b in blocks if isinstance(b, Table) and b.headers[-1] == "질의" for row in b.rows]
+    blocks = _section(build_document(big), 2, "사용자 직접 입력")
+    rows = [row for b in blocks if isinstance(b, Table) and b.headers[-1] == "입력 내용" for row in b.rows]
     assert len(rows) <= QUESTION_EXCERPT_CAP
     assert all(len(row[2]) <= QUESTION_EXCERPT_CHARS + 1 for row in rows)
     shown = "\n".join(row[2] for row in rows)

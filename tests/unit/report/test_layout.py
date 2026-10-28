@@ -112,13 +112,13 @@ def test_prompts_chapter_counts_by_session_and_shows_all_questions_when_small() 
     assert counts[0].headers[:4] == ("도구", "머신/프로필", "세션", "기간(현지)")
     assert {row[0] for row in counts[0].rows} == {"Claude Code", "Codex"}
     assert {row[2] for row in counts[0].rows} == {"s0", "s1", "s2"}
-    user = _between(doc, 2, "사용자 직접 질의")
+    user = _between(doc, 2, "사용자 직접 입력")
     assert "3건" in _paragraphs(user)[0] and "report/questions.html" in _paragraphs(user)[0]
     tables = [b for b in user if isinstance(b, Table)]
     assert tables[0].caption == "정제 기준 및 결과"
-    assert dict(tables[0].rows)["사람이 직접 입력한 질의"] == "3"
+    assert dict(tables[0].rows)["사람이 직접 입력한 메시지"] == "3"
     excerpt = tables[-1]
-    assert excerpt.headers == ("일시(현지)", "머신·채널", "질의")
+    assert excerpt.headers == ("일시(현지)", "머신·채널", "입력 내용")
     assert sorted(row[2] for row in excerpt.rows) == sorted(
         ["이른 세션 질의", "경쟁사 제안서를 요약해줘", "다른 도구 질의"]
     )

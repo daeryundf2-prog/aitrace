@@ -183,14 +183,16 @@ def test_report_json_keeps_complete_data_and_main_html_stays_small(big: ReportMo
 
 
 def test_prompts_volume_has_every_message_escaped_with_toc(big: ReportModel, tmp_path: Path) -> None:
-    text = render_prompts_volume(big, tmp_path / "prompts.html").read_text(encoding="utf-8")
+    paths = render_prompts_volume(big, tmp_path / "prompts.html")
+    assert paths[0].name == "prompts.html" and all(p.stat().st_size < 9_000_000 for p in paths)
+    text = "".join(p.read_text(encoding="utf-8") for p in paths)
     assert text.count('<div class="entry">') == N_USER + N_USER // 2 + N_INSTRUCTIONS + len(
         big.generated_files
     )
     assert "<script" not in text
     assert 'href="#generated"' in text and 'id="generated"' in text
     assert "&lt;script&gt;rule 0" in text
-    assert 'href="#t1m1"' in text and 'id="t1m1"' in text and 'id="t1m1s1"' in text
+    assert 'href="prompts/t1m1-1.html#t1m1"' in text and 'id="t1m1"' in text and 'id="t1m1s1"' in text
     assert f"synthetic prompt {N_USER - 1} " in text
 
 

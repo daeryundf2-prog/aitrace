@@ -88,13 +88,13 @@ def _findings_rows(model: ReportModel) -> list[dict[str, Any]]:
     rows.extend(
         {
             "section": "ai_tools",
-            "id": row["finding_id"],
-            "severity": row["severity"],
-            "title": row["title"],
-            "narrative": row["narrative"],
+            "id": row.get("finding_id") or row.get("tool"),
+            "severity": row.get("severity") or "info",
+            "title": row.get("title") or f"{row.get('tool')} ({row.get('kind_label') or row.get('kind')})",
+            "narrative": row.get("narrative")
+            or f"{row.get('first_seen_local') or '-'} ~ {row.get('last_seen_local') or '-'} / {row.get('evidence_count') or 0}",
         }
         for row in model.ai_tools
-        if row["kind"] == "usage"
     )
     return sorted(rows, key=lambda r: (r["section"], str(r.get("id") or "")))
 
@@ -116,7 +116,7 @@ def write_csvs(model: ReportModel, out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     tables: list[tuple[str, Sequence[str], Sequence[Mapping[str, Any]]]] = [
         ("timeline.csv", TIMELINE_COLUMNS, model.timeline),
-        ("ai_queries.csv", AI_QUERY_COLUMNS, model.ai_queries),
+        ("ai_queries.csv", AI_QUERY_COLUMNS, [_excel_question(q) for q in model.ai_queries]),
         ("questions.csv", QUESTION_COLUMNS, [_excel_question(q) for q in model.questions]),
         (
             "ai_sent_inputs.csv",

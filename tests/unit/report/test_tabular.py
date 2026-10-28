@@ -145,8 +145,21 @@ def test_write_csvs_keeps_values_and_quotes_commas(tmp_path: Path) -> None:
     assert query[AI_QUERY_COLUMNS.index("text")] == "한글 텍스트, with comma\nsecond line"
     findings = _read_csv(tmp_path / "findings.csv")
     sections = [row[0] for row in findings[1:]]
-    assert sections == ["ai_tools", "coverage"]
-    assert findings[2][FINDINGS_COLUMNS.index("narrative")] == "narrative, with comma"
+    assert sections == ["ai_tools", "ai_tools", "coverage"]
+    assert findings[3][FINDINGS_COLUMNS.index("narrative")] == "narrative, with comma"
+
+
+def test_findings_csv_lists_a_desktop_app_tool(tmp_path: Path) -> None:
+    model = _model()
+    model.ai_tools = [
+        {"kind": "app", "kind_label": "데스크톱 앱", "tool": "Hermes Agent", "first_seen_local": "2026-07-09"}
+    ]
+    model.coverage["findings"] = []
+    write_csvs(model, tmp_path)
+    rows = _read_csv(tmp_path / "findings.csv")[1:]
+    assert [(r[0], r[FINDINGS_COLUMNS.index("title")]) for r in rows] == [
+        ("ai_tools", "Hermes Agent (데스크톱 앱)")
+    ]
 
 
 def test_attribution_subject_artifacts_are_sorted_and_joined(tmp_path: Path) -> None:

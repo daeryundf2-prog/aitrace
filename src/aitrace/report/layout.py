@@ -33,7 +33,6 @@ from aitrace.report.model import (
     TIMELINE_COMPACT_ROWS,
     TIMELINE_CSV_PATH,
     TIMELINE_LIMIT_PDF_DOCX,
-    TIMELINE_SOURCE_CHARS,
     TIMELINE_SUMMARY_CHARS,
     TOOL_CALL_ROW_CAP,
     ReportModel,
@@ -44,7 +43,6 @@ KO_LETTERS = "가나다라마바사아자차카타파하"
 EN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 MAX_TOOL_NAMES = 8
 CHANNEL_ARROW = " \u2192 "
-DITTO = "\u3003"  # ditto mark: same as the cell above
 GENERATED_PATH_CHARS = 40
 
 WRITE_NAME = re.compile(
@@ -72,7 +70,6 @@ class Heading:
 @dataclass(frozen=True, slots=True)
 class Para:
     text: str
-    note: bool = False  # set-off remark (caveat, legal reference); plain renderers print it as a paragraph
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +81,6 @@ class Table:
     caption: str = ""
     label_first: bool = False  # key/value table whose first column labels the row
     compact: bool = False  # long table: renderers may use smaller type
-    figures: bool = False  # one row of headline numbers under their labels; plain renderers draw a table
 
 
 Block = Heading | Para | Table
@@ -98,7 +94,6 @@ class Document:
     cover: list[tuple[str, str]]
     notice: str
     blocks: list[Block] = field(default_factory=list)
-    theme: str = "plain"
 
     def toc(self) -> list[Heading]:
         return [b for b in self.blocks if isinstance(b, Heading) and b.toc and b.level <= 2]
@@ -183,18 +178,8 @@ class _Builder:
         self._subsub += 1
         self.blocks.append(Heading(4, f"{self._subsub})", title, self._anchor(), toc=False))
 
-    def para(self, text: str, *, note: bool = False) -> None:
-        self.blocks.append(Para(text, note))
-
-    def figures(self, items: Sequence[tuple[str, str]]) -> None:
-        self.blocks.append(
-            Table(
-                tuple(label for label, _ in items),
-                (tuple(value for _, value in items),),
-                tuple(1 for _ in items),
-                figures=True,
-            )
-        )
+    def para(self, text: str) -> None:
+        self.blocks.append(Para(text))
 
     def table(
         self,
@@ -474,9 +459,18 @@ def _statements(model: ReportModel) -> list[str]:
     else:
         out.append(t("stmt.tools_none", lang) + _cite(lang, tools_ref))
     total = len(model.ai_queries)
-    if total or f.calls:
+    if total or f.calls or model.instructions:
         out.append(
-            t("stmt.messages", lang, total=total, s=f.system, u=f.user, a=f.assistant, c=f.calls)
+            t(
+                "stmt.messages",
+                lang,
+                total=total,
+                s=f.system,
+                u=f.user,
+                a=f.assistant,
+                c=f.calls,
+                i=len(model.instructions),
+            )
             + _cite(lang, t("ref.range", lang, n=3, s1="1.", s2="4."))
         )
     else:
@@ -543,8 +537,9 @@ def _opinions(model: ReportModel) -> list[str]:
         out.append(t("opin.generated", lang, n=judged) + _cite(lang, t("ref.chapter", lang, n=4)))
     else:
         out.append(t("opin.generated_none", lang) + _cite(lang, t("ref.chapter", lang, n=4)))
+    transfer_key = "opin.transfer" if f.changes or model.exfil else "opin.transfer_none"
     out.append(
-        t("opin.transfer", lang, n=f.changes, m=len(model.exfil))
+        t(transfer_key, lang, n=f.changes, m=len(model.exfil))
         + _cite(lang, t("ref.chapter", lang, n=6), t("ref.chapter", lang, n=7))
     )
     out.append(t("opin.limits", lang) + _cite(lang, t("ref.chapter", lang, n=8)))
@@ -574,22 +569,6 @@ def _excerpt(value: Any, limit: int = EXCERPT_CHARS) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "\u2026"
 
 
-def _ditto(rows: Sequence[Sequence[str]], cols: Sequence[int]) -> list[tuple[str, ...]]:
-    """In dense tables a cell equal to the one above in a repeated column is printed as a ditto mark."""
-    if len(rows) <= EXCERPT_DENSE_ROWS:
-        return [tuple(row) for row in rows]
-    out: list[tuple[str, ...]] = []
-    for i, row in enumerate(rows):
-        prev = rows[i - 1] if i else None
-        out.append(
-            tuple(
-                DITTO if prev is not None and c in cols and cell and cell == prev[c] else cell
-                for c, cell in enumerate(row)
-            )
-        )
-    return out
-
-
 def _excerpt_chars(rows: int) -> int:
     return EXCERPT_CHARS if rows <= EXCERPT_DENSE_ROWS else EXCERPT_DENSE_CHARS
 
@@ -602,9 +581,12 @@ def _stamp(row: Mapping[str, Any]) -> tuple[bool, str]:
     return (row.get("ts_utc") is None, str(row.get("ts_utc") or ""))
 
 
-def machine_label(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]) -> str:
+def machine_label(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]], lang: str) -> str:
     machine = (meta.get(str(row.get("artifact_id"))) or {}).get("machine")
-    return str(machine) if machine else _basename(row.get("source")) or "-"
+    if machine:
+        return str(machine)
+    name = _basename(row.get("source"))
+    return t("machine.from_file", lang, name=name) if name else "-"
 
 
 @dataclass(slots=True)
@@ -644,7 +626,7 @@ def _session_counts(model: ReportModel) -> dict[tuple[str, str, str | None], _Se
             continue
         tool = tool_label(q.get("tool"), lang)
         session = q.get("session")
-        machine = machine_of.get((tool, session)) or machine_label(q, meta)
+        machine = machine_of.get((tool, session)) or machine_label(q, meta, lang)
         group = groups.setdefault((tool, machine, session), _SessionCount())
         group.touch(q)
         if role == "user":
@@ -844,8 +826,6 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
                 _excerpt(slot["text"], chars),
             )
         )
-    if len(rows) > EXCERPT_DENSE_ROWS:
-        b.para(t("table.ditto_note", lang, mark=DITTO))
     b.table(
         (
             t("counts.col_tool", lang) + " / " + t("instr.col_kind", lang),
@@ -855,7 +835,7 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
             t("instr.col_sha", lang),
             t("instr.col_excerpt", lang, n=chars),
         ),
-        _ditto(rows, (0, 1)),
+        rows,
         (2, 3, 2, 4, 3, 12) if len(rows) > EXCERPT_DENSE_ROWS else (3, 5, 2, 4, 3, 9),
         raw=(5,),
         compact=len(rows) > EXCERPT_DENSE_ROWS,
@@ -927,7 +907,7 @@ def _where(row: Mapping[str, Any], model: ReportModel, machines: Mapping[tuple[s
     if row.get("role") == "tool_call":
         machine = machines.get((tool, session)) or _basename(row.get("source")) or "-"
     else:
-        machine = machine_label(row, model.query_meta)
+        machine = machine_label(row, model.query_meta, model.lang)
     return f"{tool}\n{machine}\n{session or '-'}"
 
 
@@ -935,7 +915,8 @@ def _machines(model: ReportModel) -> dict[tuple[str, str | None], str]:
     out: dict[tuple[str, str | None], str] = {}
     for q in model.ai_queries:
         out.setdefault(
-            (tool_label(q.get("tool"), model.lang), q.get("session")), machine_label(q, model.query_meta)
+            (tool_label(q.get("tool"), model.lang), q.get("session")),
+            machine_label(q, model.query_meta, model.lang),
         )
     return out
 
@@ -1152,16 +1133,22 @@ def _assistant_section(b: _Builder, model: ReportModel) -> None:
         b.para(t("ai.note_all", lang, a=len(answers), c=len(calls)))
         rows = sorted([*answers, *calls], key=_stamp)
     else:
-        risky = [c for c in calls if _risky_call(c)]
-        rows = risky[:TOOL_CALL_ROW_CAP]
+        risky = [c for c in calls if _risky_call(c)][:TOOL_CALL_ROW_CAP]
+        room = TOOL_CALL_ROW_CAP - len(risky)
+        ordered = sorted(answers, key=_stamp)
+        sampled = (
+            [ordered[int(i * len(ordered) / room)] for i in range(min(room, len(ordered)))] if room else []
+        )
+        rows = sorted([*risky, *sampled], key=_stamp)
         b.para(
             t(
                 "ai.note_cap",
                 lang,
                 a=len(answers),
                 c=len(calls),
-                m=len(risky),
-                shown=len(rows),
+                m=len([c for c in calls if _risky_call(c)]),
+                shown=len(risky),
+                sa=len(sampled),
                 cap=TOOL_CALL_ROW_CAP,
                 volume=PROMPTS_VOLUME_PATH,
                 json=REPORT_JSON_PATH,
@@ -1351,7 +1338,7 @@ def _timeline_cell(row: Mapping[str, Any], key: str, compact: bool) -> str:
     if not compact:
         return value
     if key == "source_path":
-        return _tail(value, TIMELINE_SOURCE_CHARS)
+        return _basename(value) or value
     return value
 
 
@@ -1461,9 +1448,27 @@ def _limits(b: _Builder, model: ReportModel) -> None:
     cov = model.coverage
     b.chapter(t("chapter.limits", lang))
     b.section(t("sec.plugins", lang))
+    names = {str(ev.get("id")): _basename(ev.get("path")) or str(ev.get("id"))[:8] for ev in model.evidence}
+    runs = [
+        {**r, "evidence": names.get(str(r.get("evidence_id")), "-")} for r in cov.get("plugin_runs") or []
+    ]
+    idle = [
+        r for r in runs if r.get("status") == "no_candidates" and not r.get("warnings") and not r.get("error")
+    ]
+    busy = [r for r in runs if r not in idle]
+    if idle:
+        b.para(
+            t(
+                "plugin.idle_note",
+                lang,
+                n=len(idle),
+                names=", ".join(sorted({str(r.get("name")) for r in idle})),
+            )
+        )
     _plain_table(
         b,
         (
+            ("evidence", "plugin.col_evidence", 3),
             ("name", "plugin.col_name", 3),
             ("version", "plugin.col_version", 2),
             ("status", "plugin.col_status", 2),
@@ -1471,7 +1476,7 @@ def _limits(b: _Builder, model: ReportModel) -> None:
             ("warnings", "plugin.col_warnings", 2),
             ("error", "plugin.col_error", 4),
         ),
-        cov.get("plugin_runs") or [],
+        busy,
         status="status",
     )
     b.section(t("sec.warnings", lang))
@@ -1524,7 +1529,7 @@ def _limits(b: _Builder, model: ReportModel) -> None:
 
 def _annexes(b: _Builder, model: ReportModel) -> None:
     lang = b.lang
-    b.annex(t("annex.exports", lang), landscape=True)
+    b.annex(t("annex.exports", lang), landscape=bool(model.exports))
     b.para(t("annex.exports_note", lang, n=len(model.exports)))
     if model.exports:
         spec = COLUMNS["exports"]
@@ -1574,7 +1579,14 @@ def _annexes(b: _Builder, model: ReportModel) -> None:
             t("sign.signature", lang),
             t("sign.date", lang),
         ),
-        [(_text(sig.get("examiner")), _text(sig.get("organisation")), "\n\n", "\n\n")],
+        [
+            (
+                _text(sig.get("examiner")),
+                _text(sig.get("organisation")),
+                "\n\n",
+                _cover_date(model, lang) or "\n\n",
+            )
+        ],
         (3, 3, 3, 2),
     )
 

@@ -276,7 +276,7 @@ def test_instruction_section_counts_skills_and_lists_persona_rows() -> None:
     assert any("report/prompts.html" in p for p in _paragraphs(blocks))
 
 
-def test_dense_instruction_table_prints_repeated_tool_and_path_as_ditto() -> None:
+def test_dense_instruction_table_repeats_tool_and_path_on_every_row() -> None:
     model = sample.make_model("ko")
     base = dict(model.instructions[0])
     model.instructions = [
@@ -287,6 +287,6 @@ def test_dense_instruction_table_prints_repeated_tool_and_path_as_ditto() -> Non
     blocks = _between(build_document(model), 2, "시스템 지시문·페르소나·규칙")
     table = next(b for b in blocks if isinstance(b, Table) and len(b.rows) >= 120)
     paths = [row[1] for row in table.rows]
-    assert paths.count("/03/system_prompts.md") == 1 and paths.count("\u3003") == 119
-    assert sum(row[0] == "\u3003" for row in table.rows) >= 118
-    assert any("\u3003" in p for p in _paragraphs(blocks))
+    assert paths.count("/03/system_prompts.md") == 120
+    assert not any("\u3003" in cell for row in table.rows for cell in row)
+    assert not any("\u3003" in p for p in _paragraphs(blocks))

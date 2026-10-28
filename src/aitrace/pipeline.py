@@ -288,7 +288,7 @@ def render_reports(
         "html": lambda: written.extend(
             [
                 render_html(model, report_dir / "report.html"),
-                render_prompts_volume(model, report_dir / "prompts.html"),
+                *render_prompts_volume(model, report_dir / "prompts.html"),
                 render_questions_volume(model, report_dir / "questions.html"),
             ]
         ),

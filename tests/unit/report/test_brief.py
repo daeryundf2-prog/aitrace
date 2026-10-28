@@ -37,7 +37,7 @@ def _chapter(doc: Document, title: str) -> list[Block]:
 
 
 def _tables(blocks: list[Block]) -> list[Table]:
-    return [b for b in blocks if isinstance(b, Table) and not b.figures]
+    return [b for b in blocks if isinstance(b, Table)]
 
 
 def _answers(table: Table) -> dict[str, str]:

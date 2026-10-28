@@ -24,6 +24,7 @@ LAYOUT = (
     "logs/aitrace.log",
     "report/report.html",
     "report/prompts.html",
+    "report/prompts/t1m1-1.html",
     "report/questions.html",
     "report/report.pdf",
     "report/brief.pdf",

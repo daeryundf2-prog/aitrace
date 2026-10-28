@@ -43,14 +43,14 @@ _KO: dict[str, str] = {
     "label.python": "Python",
     "label.dissect": "dissect 라이브러리",
     "label.os": "운영체제",
-    "methodology.p1": "증거물은 읽기 전용으로 열람하였으며 분석 전후 해시를 비교하여 무결성을 확인하였다.",
-    "methodology.p2": "플러그인이 파일시스템과 아티팩트에서 레코드를 추출하고 모든 레코드에 출처(파일 경로, 위치)를 기록하였다.",
-    "methodology.p3": "분석기가 AI 사용, 질의, 파일 수명주기, 반출 경로, 작성 주체를 규칙 기반으로 판단하고 근거와 한계를 함께 제시하였다.",
-    "methodology.p4": "모든 시각은 UTC로 정규화하였으며 보고서에는 지정 시간대의 현지 시각을 병기하였다.",
+    "methodology.p1": "증거물은 읽기 전용으로 열람하였으며 분석 전후 해시를 비교하여 무결성을 확인하였음.",
+    "methodology.p2": "플러그인이 파일시스템과 아티팩트에서 레코드를 추출하고 모든 레코드에 출처(파일 경로, 위치)를 기록하였음.",
+    "methodology.p3": "분석기가 AI 사용, 질의, 파일 수명주기, 반출 경로, 작성 주체를 규칙 기반으로 판단하고 근거와 한계를 함께 제시하였음.",
+    "methodology.p4": "모든 시각은 UTC로 정규화하였으며 보고서에는 지정 시간대의 현지 시각을 병기하였음.",
     "methodology.standards_intro": "적용 기준",
     "methodology.tool_validation": (
-        "도구 검증: aitrace {aitrace}, dissect.target {dissect}; "
-        "docs/validation.md에 문서화된 합성 픽스처에 대하여 검증됨."
+        "사용 도구: aitrace {aitrace}, dissect.target {dissect}. "
+        "분석 규칙은 개발 단계에서 내용을 알고 있는 시험 자료로 결과를 대조하여 확인하였음."
     ),
     "summary.q1": "Q1. AI 도구를 어떤 작업에 사용하였는가",
     "summary.q2": "Q2. 어떤 질의를 하였는가",
@@ -73,7 +73,7 @@ _KO: dict[str, str] = {
     "col.summary": "요약",
     "col.source_path": "원본 경로",
     "col.artifact_id": "아티팩트 ID",
-    "timeline.note": "표시 한도({limit}건)를 초과하여 {omitted}건을 생략하였다. 전체 목록은 {csv} 참조.",
+    "timeline.note": "표시 한도({limit}건)를 초과하여 {omitted}건을 생략하였음. 전체 목록은 {csv} 참조.",
     "severity.info": "정보",
     "severity.low": "낮음",
     "severity.medium": "중간",
@@ -157,8 +157,8 @@ _EN: dict[str, str] = {
     ),
     "methodology.standards_intro": "Applied standards",
     "methodology.tool_validation": (
-        "Tool validation: aitrace {aitrace}, dissect.target {dissect}; "
-        "validated against the synthetic fixtures documented in docs/validation.md."
+        "Tools: aitrace {aitrace}, dissect.target {dissect}. "
+        "The analysis rules were checked during development against test material with known content."
     ),
     "summary.q1": "Q1. What tasks was the AI used for?",
     "summary.q2": "Q2. What queries were made?",
@@ -344,6 +344,12 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "sec.counts": ("수량표", "Counts by Tool, Machine and Session"),
     "sec.user_excerpt": ("사용자 입력 발췌", "User Input Excerpts"),
     "counts.col_tool": ("도구", "Tool"),
+    "machine.from_file": ("기기 미상(기록 파일 {name})", "Machine unknown (record file {name})"),
+    "plugin.col_evidence": ("증거물", "Evidence"),
+    "plugin.idle_note": (
+        "아래 표에는 분석 대상이 있었던 플러그인 실행만 실었음. 대상 자료가 없어 기록을 만들지 않은 실행 {n}건({names})은 표에서 뺐음.",
+        "The table lists only plugin runs that found material. {n} run(s) that found nothing to read ({names}) are left out.",
+    ),
     "counts.col_machine": ("머신/프로필", "Machine / profile"),
     "counts.col_session": ("세션", "Session"),
     "counts.col_period": ("기간(현지)", "Period (local)"),
@@ -478,15 +484,9 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "q.ch.oneshot": ("일회 실행(oneshot)", "One-shot run"),
     "q.ch.api_server": ("API 서버(api_server)", "API server"),
     "q.ch.cron": ("예약 작업(cron)", "Scheduled job"),
-    "brief.fig.human": ("사람이 직접 입력", "Typed by a person"),
-    "brief.fig.ai": ("AI·프로그램이 보낸 입력", "Sent by AI or programs"),
-    "brief.fig.devices": ("사람 입력이 있는 기기", "Devices with typed input"),
-    "brief.fig.devices_value": ("{n}대", "{n}"),
-    "brief.fig.flagged": ("주의하여 볼 입력", "Inputs to read closely"),
-    "brief.kicker": ("디지털 포렌식 분석", "Digital Forensic Analysis"),
-    "brief.running": ("검토용 요약서", "Review brief"),
-    "brief.confidential": ("대외비", "Confidential"),
     "brief.repeat": ("같은 내용 {n}회", "same text {n} times"),
+    "brief.note_mark": ("※ ", "Note: "),
+    "brief.denial": ("(부인·방지 취지)", "(denies or prevents)"),
     "brief.title": ("AI 사용 흔적 분석 결과 검토용 요약서", "AI Use Analysis: Review Brief"),
     "brief.doc_number": ("{doc}-요약", "{doc}-BRIEF"),
     "brief.notice": (
@@ -534,8 +534,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "Any requests about bypassing security or leaking data",
     ),
     "brief.a.flagged": (
-        "보안 우회 관련 {security}건, 유출·반출 관련 {exfil}건의 입력에 해당 키워드가 들어 있음. 키워드가 들어 있다는 사실만으로 부정한 의도를 단정할 수는 없으므로 4장의 원문과 앞뒤 대화를 함께 보아야 함.",
-        "{security} input(s) mention security bypass and {exfil} mention exfiltration keywords. A keyword alone does not show intent; read the text in chapter 4 with the surrounding conversation.",
+        "보안 우회 관련 단어가 {security}건, 유출·반출 관련 단어가 {exfil}건의 입력에 들어 있음. 이 중 {denial}건은 유출이나 우회를 부인하거나 막으려는 취지의 문장임. 단어가 들어 있다는 사실만으로 부정한 의도를 단정할 수 없으므로 4장의 원문과 앞뒤 대화를 함께 보아야 함.",
+        "{security} input(s) contain security-bypass words and {exfil} contain exfiltration words. {denial} of them deny or prevent the act. A word alone does not show intent. Read the text in chapter 4 with the surrounding conversation.",
     ),
     "brief.a.no_flagged": (
         "보안 우회나 유출·반출 관련 키워드가 들어간 입력은 확인되지 않음.",
@@ -658,8 +658,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "brief.example": ("#{no} {when} {machine}: {text}", "#{no} {when} {machine}: {text}"),
     "brief.sec.flagged": ("주의하여 볼 입력", "Inputs to Read Closely"),
     "brief.flagged_intro": (
-        "보안 우회나 유출·반출 관련 키워드가 들어간 입력은 {n}건이며, 같은 문장을 한 줄로 합쳐 그중 {shown}줄을 실었음. 사람이 문장으로 쓴 입력을 먼저, 붙여 넣은 명령어·로그를 나중에 두고 각각 시간순으로 배열하였음. 전체 목록은 {csv}의 분류 열에서 찾을 수 있음.",
-        "{n} input(s) contain security-bypass or exfiltration keywords; {shown} distinct texts are listed, inputs written as sentences before pasted commands and logs, each in time order. The full list is in {csv} (topics column).",
+        "보안 우회나 유출·반출 관련 단어가 들어간 입력은 {n}건이며, 같은 문장을 한 줄로 합쳐 그중 {shown}줄을 실었음. 행위를 요청하거나 지시하는 문장을 먼저, 유출이나 우회를 부인하거나 막으려는 취지의 문장을 다음에, 붙여 넣은 명령어·로그를 마지막에 두고 각각 시간순으로 배열하였음. 부인·방지 취지인지는 문장 표현으로 가린 것이므로 원문으로 확인하여야 함. 전체 목록은 {csv}의 분류 열에서 찾을 수 있음.",
+        "{n} input(s) contain security-bypass or exfiltration words; identical texts are merged and {shown} are listed: requests and instructions first, then sentences that deny or prevent the act, then pasted commands and logs, each in time order. Whether a sentence denies or prevents is read from its wording; confirm against the text. The full list is in {csv} (topics column).",
     ),
     "brief.col.no_when_device": ("번호·일시·기기", "No., time, device"),
     "brief.no_when_device": ("#{no}\n{when}\n{machine}", "#{no}\n{when}\n{machine}"),
@@ -855,8 +855,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "All {a} AI response(s) and {c} tool call(s) are shown.",
     ),
     "ai.note_cap": (
-        "AI 응답 {a}건, 도구 실행 {c}건이 기록되었음. 이 중 파일 쓰기·삭제 또는 전송·원격 명령에 해당하는 도구 실행은 {m}건이며 {shown}건을 표시하였음(표시 한도 {cap}건). 전체는 {volume}, {json} 참조.",
-        "{a} AI response(s) and {c} tool call(s) were recorded. {m} tool call(s) write or delete files or run transfer / remote commands; {shown} are shown (cap {cap} rows). Full records: {volume}, {json}.",
+        "AI 응답 {a}건, 도구 실행 {c}건이 기록되었음. 표시 한도 {cap}건 안에서 파일 쓰기·삭제 또는 전송·원격 명령에 해당하는 도구 실행 {m}건 중 {shown}건을 먼저 싣고, 남는 칸에 AI 응답 {sa}건을 기간 전체에서 고르게 골라 시간순으로 실었음. 전체는 {volume}, {json} 참조.",
+        "{a} AI response(s) and {c} tool call(s) were recorded. Within the {cap}-row cap, {shown} of the {m} tool call(s) that write or delete files or run transfer / remote commands come first, and {sa} AI response(s) spread over the whole period fill the rest, in time order. Full records: {volume}, {json}.",
     ),
     "timeline.chat_aggregate": (
         "{tool} 세션 {session}: 사용자 입력 {u}건, AI 응답 {a}건, 도구 실행 {c}건, {first}~{last}",
@@ -871,6 +871,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "본 별책은 AI 분석 보고서 본문 제3장에서 발췌한 프롬프트의 전문임. AI 대화 메시지 {m}건과 지시문 {i}건을 도구, 머신(프로필), 세션 순으로 시간순 정리하였으며 원문은 복원된 그대로 표기하였음.",
         "This volume reproduces the full text excerpted in Chapter 3 of the main report: {m} chat message(s) and {i} instruction(s), grouped by tool, machine (profile) and session in chronological order, as recovered.",
     ),
+    "vol.back": ("목차로 돌아가기", "Back to the contents"),
     "vol.toc": ("목차", "Contents"),
     "vol.instructions": ("시스템 지시문·페르소나·규칙", "System instructions, persona and rules"),
     "vol.messages": ("대화 메시지", "Chat messages"),
@@ -891,7 +892,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "{n} other system record(s) (full list: {csv})",
     ),
     "changes.omitted": (
-        "AI 연관 근거가 없는 파일 목록 기록 {n}건은 표시하지 않았다. 전체 목록은 {csv} 참조.",
+        "AI 연관 근거가 없는 파일 목록 기록 {n}건은 표시하지 않았음. 전체 목록은 {csv} 참조.",
         "{n} file inventory record(s) without AI evidence are not shown. See {csv} for the full list.",
     ),
     "tl.file_created": ("파일 생성: {path}", "File created: {path}"),
@@ -1059,10 +1060,6 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "페르소나·규칙·메모리 파일과 고유 시스템 프롬프트 {n}종은 아래에 개별로 표시하였음. 스킬, 작업공간 지시문, 템플릿, 설정 파일 등 {m}종은 종류와 상위 디렉터리별 건수만 표로 정리하였으며, 각 파일의 전문은 {volume}에 수록하였음.",
         "{n} persona / rules / memory file(s) and distinct system prompt(s) are listed individually below. The {m} skill, workspace instruction, template, config and similar file(s) are summarised by kind and top directory; the full text of every file is in {volume}.",
     ),
-    "table.ditto_note": (
-        "표의 {mark} 표시는 바로 위 행과 같은 값이라는 뜻임(쪽이 바뀐 경우 앞 쪽의 마지막 행 기준).",
-        "A {mark} mark in the table means the same value as the row above (for the first row of a page, the last row of the previous page).",
-    ),
     "instr.col_dir": ("상위 디렉터리", "Top directory"),
     "instr.col_count": ("파일 수", "Files"),
     "instr.col_total": ("합계 크기(바이트)", "Total size (bytes)"),
@@ -1141,8 +1138,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     ),
     "stmt.tools_none": ("AI 도구 사용 흔적은 확인되지 않음", "No trace of AI tool usage was found"),
     "stmt.messages": (
-        "복원된 대화 메시지는 {total}건(시스템 지시문 {s}건, 사용자 입력 {u}건, AI 응답 {a}건)이며 AI 도구 호출 기록은 {c}건으로 확인됨",
-        "{total} chat message(s) were recovered ({s} system, {u} user, {a} AI) together with {c} tool call record(s)",
+        "복원된 대화 메시지는 {total}건(사용자 입력 {u}건, AI 응답 {a}건, 대화 안의 시스템 지시문 {s}건)이며, 이와 별도로 지시문 파일·시스템 프롬프트 {i}건과 AI 도구 호출 기록 {c}건이 확인됨",
+        "{total} chat message(s) were recovered ({u} user, {a} AI, {s} system inside conversations), together with {i} separate instruction file(s) or system prompt(s) and {c} tool call record(s)",
     ),
     "stmt.messages_none": (
         "복원된 대화 메시지와 AI 도구 호출 기록은 확인되지 않음",
@@ -1209,6 +1206,10 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "AI가 생성하였거나 관여한 것으로 판정된 파일은 확인되지 않음",
         "No file was judged to be generated or touched by AI",
     ),
+    "opin.transfer_none": (
+        "이 자료의 범위 안에서는 파일 생성·변경·삭제 이력과 반출·원격·전송 경로가 확인되지 않음. 자료에 포함되지 않은 기록(기기 자체의 전송 기록 등)까지 없다는 뜻은 아님",
+        "Within this material no file history and no export, remote or transfer path were found; this does not rule out records the material does not contain",
+    ),
     "opin.transfer": (
         "파일 이력 {n}건과 반출·원격·전송 경로 {m}건이 확인되었으나, 기록이 존재한다는 사실만으로 실제 반출이 완료되었다고 단정하기는 어려움",
         "{n} file history item(s) and {m} export, remote or transfer path(s) were found; the existence of records alone does not establish completed transfer",
@@ -1230,6 +1231,12 @@ _CUSTODY: dict[str, tuple[str, str]] = {
     "custody.action.report_requested": ("보고서 생성 요청", "Report requested"),
     "custody.action.report_rendered": ("보고서 생성", "Report rendered"),
     "status.no_candidates": ("대상 없음", "no candidates"),
+    "custody.key.bytes": ("크기(바이트)", "bytes"),
+    "custody.key.tree": ("파일 목록 해시", "file list hash"),
+    "custody.key.root": ("최상위 폴더", "root folder"),
+    "custody.key.evidence": ("증거물", "evidence"),
+    "custody.key.exit_code": ("종료 코드", "exit code"),
+    "custody.key.verification": ("검증 결과", "verification"),
     "custody.key.aitrace_version": ("aitrace 버전", "aitrace version"),
     "custody.key.case_id": ("사건 ID", "case ID"),
     "custody.key.case_name": ("사건명", "case name"),
@@ -1277,47 +1284,47 @@ for _key, (_ko, _en) in _PAIRS.items():
 # Analyzer-local English limitation texts that have no catalog.LIMITATIONS entry.
 LIMITATION_ALIASES: dict[str, dict[str, str]] = {
     "Links show association with AI activity, not authorship; time_proximity alone is a weak coincidence.": {
-        "ko": "연관은 AI 활동과의 관련성을 나타낼 뿐 작성 주체를 증명하지 않으며, 시간적 근접만으로는 우연일 수 있다.",
+        "ko": "연관은 AI 활동과의 관련성을 나타낼 뿐 작성 주체를 증명하지 않으며, 시간적 근접만으로는 우연일 수 있음.",
         "en": "Links show association with AI activity, not authorship; time_proximity alone is a weak coincidence.",
     },
     "USB insertion does not prove file copy": {
-        "ko": "USB 연결 기록은 파일 복사를 증명하지 않는다.",
+        "ko": "USB 연결 기록은 파일 복사를 증명하지 않음.",
         "en": "USB insertion does not prove file copy",
     },
     "Artifacts show a tool was present or used on this evidence; they do not establish which person ran it.": {
-        "ko": "아티팩트는 도구가 존재하거나 사용되었음을 보일 뿐 누가 실행했는지는 증명하지 않는다.",
+        "ko": "아티팩트는 도구가 존재하거나 사용되었음을 보일 뿐 누가 실행했는지는 증명하지 않음.",
         "en": "Artifacts show a tool was present or used on this evidence; they do not establish which person ran it.",
     },
     "Inventory timestamps are the recorded event times and inherit any clock or timezone limits of their source.": {
-        "ko": "목록의 시각은 기록된 이벤트 시각이며 원본의 시계·시간대 한계를 그대로 따른다.",
+        "ko": "목록의 시각은 기록된 이벤트 시각이며 원본의 시계·시간대 한계를 그대로 따름.",
         "en": "Inventory timestamps are the recorded event times and inherit any clock or timezone limits of their source.",
     },
     "Prompt text is shown as recovered; sessions without a session_id are split by a 30-minute gap rule.": {
-        "ko": "질의 내용은 복원된 그대로 표시하며, 세션 ID가 없는 세션은 30분 간격 규칙으로 구분하였다.",
+        "ko": "질의 내용은 복원된 그대로 표시하며, 세션 ID가 없는 세션은 30분 간격 규칙으로 구분하였음.",
         "en": "Prompt text is shown as recovered; sessions without a session_id are split by a 30-minute gap rule.",
     },
     "Task classification is keyword-based and heuristic; it does not establish intent.": {
-        "ko": "작업 분류는 키워드 기반 휴리스틱이며 의도를 증명하지 않는다.",
+        "ko": "작업 분류는 키워드 기반 휴리스틱이며 의도를 증명하지 않음.",
         "en": "Task classification is keyword-based and heuristic; it does not establish intent.",
     },
     "Directory evidence has no image segments; every file was SHA-256 hashed at intake and after analysis, and the recorded media hash is the SHA-256 of the sorted per-file manifest (path, size, sha256)": {
-        "ko": "폴더 형태 증거물은 이미지 세그먼트가 없으므로 분석 전과 후에 모든 파일의 SHA-256을 계산하여 비교하였고, 기재된 미디어 해시는 파일별 목록(경로, 크기, SHA-256)을 정렬하여 계산한 SHA-256 값이다.",
+        "ko": "폴더 형태 증거물은 이미지 세그먼트가 없으므로 분석 전과 후에 모든 파일의 SHA-256을 계산하여 비교하였고, 기재된 미디어 해시는 파일별 목록(경로, 크기, SHA-256)을 정렬하여 계산한 SHA-256 값임.",
         "en": "Directory evidence has no image segments; every file was SHA-256 hashed at intake and after analysis, and the recorded media hash is the SHA-256 of the sorted per-file manifest (path, size, sha256)",
     },
     "Directory evidence has no image segments; files were read in place and no acquisition hash exists": {
-        "ko": "폴더 형태 증거물은 이미지 세그먼트가 없으며, 파일을 원래 위치에서 읽었고 획득 해시는 존재하지 않는다.",
+        "ko": "폴더 형태 증거물은 이미지 세그먼트가 없으며, 파일을 원래 위치에서 읽었고 획득 해시는 존재하지 않음.",
         "en": "Directory evidence has no image segments; files were read in place and no acquisition hash exists",
     },
     "E01 stored acquisition hash not readable by this tool; segment and media hashes recorded instead": {
-        "ko": "E01에 저장된 획득 해시를 이 도구가 읽을 수 없어 세그먼트 해시와 미디어 해시를 대신 기록하였다.",
+        "ko": "E01에 저장된 획득 해시를 이 도구가 읽을 수 없어 세그먼트 해시와 미디어 해시를 대신 기록하였음.",
         "en": "E01 stored acquisition hash not readable by this tool; segment and media hashes recorded instead",
     },
     "Based on the agent's own record; whether a person edited the output afterwards cannot be established from this material alone.": {
-        "ko": "에이전트 자체 기록에 근거함; 이후 사람의 수정 여부는 이 자료만으로 확인할 수 없음",
+        "ko": "에이전트 자체 기록에 근거함. 이후 사람의 수정 여부는 이 자료만으로 확인할 수 없음",
         "en": "Based on the agent's own record; whether a person edited the output afterwards cannot be established from this material alone.",
     },
     "Skipped artifacts contributed nothing to this analyzer's results.": {
-        "ko": "건너뛴 아티팩트는 이 분석기의 결과에 반영되지 않았다.",
+        "ko": "건너뛴 아티팩트는 이 분석기의 결과에 반영되지 않았음.",
         "en": "Skipped artifacts contributed nothing to this analyzer's results.",
     },
 }

@@ -25,7 +25,7 @@ from aitrace.core.model import Artifact, Attribution, Event, Finding, Provenance
 from aitrace.db.store import CaseStore
 
 T0 = datetime(2026, 10, 1, 1, 0, 0, tzinfo=UTC)
-P = "# 제안서 요약\n\n본 문서는 경쟁사 제안서의 핵심 조건을 정리한 것이다. 가격 조건, 납기, 보증 범위를 비교하였다.\n"
+P = "# 제안서 요약\n\n본 문서는 경쟁사 제안서의 핵심 조건을 정리한 것임. 가격 조건, 납기, 보증 범위를 비교하였다.\n"
 Q = "# 회의록\n\n1. 일정 확정\n2. 예산 검토\n3. 담당자 배정\n"
 LONG_TEXT = "the quick brown fox jumps over the lazy dog while the cat sleeps quietly on the warm sofa today"
 
@@ -42,7 +42,9 @@ def _art(aid: str, kind: ArtifactKind, data: dict[str, Any]) -> Artifact:
     return Artifact(
         id=aid,
         kind=kind,
-        provenance=Provenance(evidence_id="ev", volume=0, source_path="/src", plugin="p", plugin_version="1.0"),
+        provenance=Provenance(
+            evidence_id="ev", volume=0, source_path="/src", plugin="p", plugin_version="1.0"
+        ),
         data=data,
         user="kim",
     )
@@ -75,7 +77,9 @@ def _tool_call(aid: str, path: str, content: str | None, ts: datetime) -> list[A
     return [_art(aid, ArtifactKind.AI_TOOL_CALL, data), _event(aid, ts)]
 
 
-def _file(aid: str, path: str, *, content: str | None = None, mtime: datetime | None = None, **extra: Any) -> Artifact:
+def _file(
+    aid: str, path: str, *, content: str | None = None, mtime: datetime | None = None, **extra: Any
+) -> Artifact:
     data: dict[str, Any] = {"path": path, "size": 1, "is_dir": False, "in_use": True, "source": "stat"}
     if content is not None:
         data["content_sha256"] = _sha(content)
@@ -249,8 +253,14 @@ def test_vcs_ai_trailer_subject_is_repo_and_sha(store: CaseStore) -> None:
             _art(
                 "v2",
                 ArtifactKind.VCS_COMMIT,
-                {"repo_path": "/Users/park/repo", "sha": "def456", "author": "a", "committer": "a", "message": "m",
-                 "trailers": []},
+                {
+                    "repo_path": "/Users/park/repo",
+                    "sha": "def456",
+                    "author": "a",
+                    "committer": "a",
+                    "message": "m",
+                    "trailers": [],
+                },
             ),
         ]
     )
@@ -263,10 +273,18 @@ def test_vcs_ai_trailer_subject_is_repo_and_sha(store: CaseStore) -> None:
 def test_content_match_scales_with_jaccard(store: CaseStore) -> None:
     store.add(
         [
-            _art("m2", ArtifactKind.AI_CHAT_MESSAGE, {"tool": "ChatGPT", "role": "assistant", "text": LONG_TEXT}),
+            _art(
+                "m2",
+                ArtifactKind.AI_CHAT_MESSAGE,
+                {"tool": "ChatGPT", "role": "assistant", "text": LONG_TEXT},
+            ),
             _file("f7", "/Users/kim/essay.txt", text_sample=LONG_TEXT, mtime=T0 - timedelta(days=3)),
-            _file("f8", "/Users/kim/other.txt", text_sample="completely unrelated words " * 6,
-                  mtime=T0 - timedelta(days=3)),
+            _file(
+                "f8",
+                "/Users/kim/other.txt",
+                text_sample="completely unrelated words " * 6,
+                mtime=T0 - timedelta(days=3),
+            ),
         ]
     )
     attrs, _ = _run(store)
@@ -279,7 +297,13 @@ def test_content_match_scales_with_jaccard(store: CaseStore) -> None:
 
 def test_metadata_hint_alone_is_undetermined_weak(store: CaseStore) -> None:
     store.add(
-        [_art("d1", ArtifactKind.DOC_METADATA, {"path": "/d/a.docx", "hints": [{"type": "x", "value": "Copilot"}]})]
+        [
+            _art(
+                "d1",
+                ArtifactKind.DOC_METADATA,
+                {"path": "/d/a.docx", "hints": [{"type": "x", "value": "Copilot"}]},
+            )
+        ]
     )
     att = _run(store)[0]["/d/a.docx"]
     assert att.verdict is Verdict.UNDETERMINED
@@ -338,7 +362,6 @@ def _bad_records() -> list[Artifact | Event]:
     ]
 
 
-
 def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
     store.add(_good_records())
     baseline = list(ANALYZER.run(store, "UTC"))
@@ -357,11 +380,21 @@ def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
 
 def test_download_origin_with_ai_service_adds_download_signal(store: CaseStore) -> None:
     path = "/Users/kim/Downloads/report.docx"
-    origin = {"url": "https://files.oaiusercontent.com/x", "origin_url": "https://chatgpt.com/c/1", "agent": "Safari"}
+    origin = {
+        "url": "https://files.oaiusercontent.com/x",
+        "origin_url": "https://chatgpt.com/c/1",
+        "agent": "Safari",
+    }
     store.add(
         [
-            _art("do1", ArtifactKind.DOWNLOAD_ORIGIN, {**origin, "target_path": path, "ai_service": "ChatGPT"}),
-            _art("do2", ArtifactKind.DOWNLOAD_ORIGIN, {**origin, "target_path": "/Users/kim/Downloads/other.zip"}),
+            _art(
+                "do1", ArtifactKind.DOWNLOAD_ORIGIN, {**origin, "target_path": path, "ai_service": "ChatGPT"}
+            ),
+            _art(
+                "do2",
+                ArtifactKind.DOWNLOAD_ORIGIN,
+                {**origin, "target_path": "/Users/kim/Downloads/other.zip"},
+            ),
         ]
     )
     attrs, _ = _run(store)
@@ -407,7 +440,13 @@ def test_unknown_call_name_without_write_semantics_is_ignored(store: CaseStore) 
             _art(
                 "x1",
                 ArtifactKind.AI_TOOL_CALL,
-                {"tool": "Hermes Agent", "session_id": "s", "call_name": "cron_listing", "input": {}, "file_path": "/a"},
+                {
+                    "tool": "Hermes Agent",
+                    "session_id": "s",
+                    "call_name": "cron_listing",
+                    "input": {},
+                    "file_path": "/a",
+                },
             ),
             _event("x1", T0),
         ]

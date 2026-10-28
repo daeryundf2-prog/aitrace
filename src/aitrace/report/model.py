@@ -25,7 +25,7 @@ from aitrace.core.model import Artifact, Attribution, Case, Evidence, Finding, f
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.db.store import CaseStore
 from aitrace.report.i18n import DEFAULT_LANG, LIMITATION_ALIASES, STANDARDS, STRINGS, t
-from aitrace.report.questions import build_questions
+from aitrace.report.questions import AGENT_CHANNELS, HUMAN, build_questions, normalise
 from aitrace.report.timeline import (
     Focus,
     collapsed_row,
@@ -127,8 +127,7 @@ EXCERPT_DENSE_ROWS = (
 )
 EXCERPT_DENSE_CHARS = 100
 TIMELINE_COMPACT_ROWS = 200  # a timeline longer than this renders compact: shorter cells, smaller PDF type
-TIMELINE_SUMMARY_CHARS = 60  # one table line for most rows
-TIMELINE_SOURCE_CHARS = 20
+TIMELINE_SUMMARY_CHARS = 160  # about two lines of the landscape summary column
 SHA_PREFIX_CHARS = 12
 SESSION_ROW_CAP = 60  # busiest session rows in the chapter 3 count table
 MACHINE_ROW_CAP = 60  # busiest machine / source-file rows in the machine totals; the rest roll into one row
@@ -708,6 +707,23 @@ def _ai_tools_section(usage: Sequence[Finding], tz: str, lang: str) -> list[dict
     return _plain(rows)
 
 
+_NOTICE_KINDS = frozenset({"system_notice", "compaction", "empty"})
+
+
+def _message_actor(art: Artifact | None, actor: str) -> str:
+    """A user-role message that an agent, a program or a notice produced is not shown as typed by a person."""
+    if art is None or actor != Actor.HUMAN.value or art.data.get("role") != "user":
+        return actor
+    raw_extra = art.data.get("extra")
+    extra: Mapping[str, Any] = raw_extra if isinstance(raw_extra, Mapping) else {}
+    if str(art.data.get("channel") or extra.get("channel") or "") in AGENT_CHANNELS:
+        return Actor.AI.value
+    kind = normalise(str(art.data.get("text") or ""), art.provenance.source_path or "")[0]
+    if kind in _NOTICE_KINDS:
+        return Actor.SYSTEM.value
+    return actor if kind == HUMAN else Actor.AI.value
+
+
 def _query_actor(role: str, event_actor: Actor | None) -> str:
     if event_actor is not None:
         return event_actor.value
@@ -722,7 +738,7 @@ def _ai_queries_section(
         event = first_event.get(a.id)
         ts: datetime | None = event.ts_utc if event is not None else None
         role = str(a.data.get("role", "unknown"))
-        actor = _query_actor(role, event.actor if event is not None else None)
+        actor = _message_actor(a, _query_actor(role, event.actor if event is not None else None))
         row = {
             "ts_utc": fmt_utc(ts) if ts is not None else None,
             "ts_local": fmt_local(ts, tz) if ts is not None else None,
@@ -1231,13 +1247,13 @@ def build_report_model(
                 "ts_utc": fmt_utc(e.ts_utc) if e.ts_utc is not None else None,
                 "ts_local": fmt_local(e.ts_utc, tz) if e.ts_utc is not None else None,
                 "category": e.category.value,
-                "actor": e.actor.value,
+                "actor": (actor := _message_actor(art, e.actor.value)),
                 "user": e.user,
                 "summary": e.summary,
                 "source_path": source_paths.get(e.artifact_id),
                 "artifact_id": e.artifact_id,
                 "category_label": _enum_label("category", e.category.value, lang),
-                "actor_label": _enum_label("actor", e.actor.value, lang),
+                "actor_label": _enum_label("actor", actor, lang),
             }
         )
         if (

@@ -62,7 +62,6 @@ def build_brief_document(model: ReportModel) -> Document:
         cover=cover,
         notice=t("brief.notice", lang),
         blocks=b.blocks,
-        theme="brief",
     )
 
 
@@ -108,7 +107,7 @@ def _per_machine(questions: Sequence[Mapping[str, Any]]) -> list[tuple[str, int,
 def _flagged(questions: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """Flagged inputs, the ones a person wrote as sentences before pasted logs, each group in time order."""
     hits = [q for q in questions if set(q.get("topics") or ()) & set(SENSITIVE_TASKS)]
-    return sorted(hits, key=lambda q: (_pasted(q.get("text")), int(q.get("no") or 0)))
+    return sorted(hits, key=lambda q: (_pasted(q.get("text")), bool(q.get("denial")), int(q.get("no") or 0)))
 
 
 def _topic_count(stats: Mapping[str, Any], topic: str) -> int:
@@ -120,17 +119,6 @@ def _conclusion(b: Builder, model: ReportModel) -> None:
     stats = model.question_stats
     excluded = stats.get("excluded") or {}
     b.chapter(t("brief.ch.conclusion", lang))
-    b.figures(
-        [
-            (t("brief.fig.human", lang), _n(stats.get("human"))),
-            (t("brief.fig.ai", lang), _n(sum(int(excluded.get(k) or 0) for k in AI_KINDS))),
-            (
-                t("brief.fig.devices", lang),
-                t("brief.fig.devices_value", lang, n=len(_per_machine(model.questions))),
-            ),
-            (t("brief.fig.flagged", lang), _n(len(_flagged(model.questions)))),
-        ]
-    )
     b.para(t("brief.conclusion_intro", lang))
     rows: list[tuple[str, str]] = []
 
@@ -187,7 +175,8 @@ def _conclusion(b: Builder, model: ReportModel) -> None:
     security = _topic_count(stats, "TASK-SECURITY")
     exfil_q = _topic_count(stats, "TASK-EXFIL")
     if security or exfil_q:
-        flagged = t("brief.a.flagged", lang, security=_n(security), exfil=_n(exfil_q))
+        denials = sum(1 for q in _flagged(model.questions) if q.get("denial"))
+        flagged = t("brief.a.flagged", lang, security=_n(security), exfil=_n(exfil_q), denial=_n(denials))
     else:
         flagged = t("brief.a.no_flagged", lang)
     rows.append((t("brief.q.flagged", lang), flagged))
@@ -258,7 +247,7 @@ def _who(b: Builder, model: ReportModel) -> None:
         )
     else:
         b.para(t("brief.a.no_devices", lang))
-    b.para(t("brief.who_caveat", lang), note=True)
+    b.para(t("brief.note_mark", lang) + t("brief.who_caveat", lang))
 
 
 def _when(b: Builder, model: ReportModel) -> None:
@@ -311,7 +300,7 @@ def _when(b: Builder, model: ReportModel) -> None:
         ],
         (5, 2, 2),
     )
-    b.para(t("brief.hours_note", lang), note=True)
+    b.para(t("brief.note_mark", lang) + t("brief.hours_note", lang))
 
 
 def _hour_bucket(q: Mapping[str, Any]) -> str:
@@ -346,9 +335,16 @@ def _what(b: Builder, model: ReportModel) -> None:
     topics = list((stats.get("topics") or {}).items())
     if topics:
         rows = []
+        used: set[Any] = set()
         for topic, count in topics:
             matches = [q for q in model.questions if topic in (q.get("topics") or ())]
-            first = next((q for q in matches if not _pasted(q.get("text"))), matches[0] if matches else None)
+            fresh = [q for q in matches if q.get("no") not in used]
+            first = next(
+                (q for q in fresh if not _pasted(q.get("text")) and not q.get("denial")),
+                next(iter(fresh or matches), None),
+            )
+            if first is not None:
+                used.add(first.get("no"))
             rows.append(
                 (t(f"flag.{topic}", lang), _n(count), _example(first, lang, EXAMPLE_CHARS) if first else "-")
             )
@@ -382,6 +378,8 @@ def _what(b: Builder, model: ReportModel) -> None:
         if len(same) > 1:
             where += "\n" + t("brief.repeat", lang, n=len(same))
         topics = ", ".join(t(f"flag.{k}", lang) for k in q.get("topics") or () if k in SENSITIVE_TASKS)
+        if q.get("denial"):
+            topics += "\n" + t("brief.denial", lang)
         rows.append((where, topics, _one_line(q.get("text"), FLAGGED_CHARS)))
     b.table(
         (t("brief.col.no_when_device", lang), t("brief.col.topic", lang), t("brief.col.input", lang)),
@@ -453,7 +451,7 @@ def _evidence(b: Builder, model: ReportModel) -> None:
         (2, 4, 4),
         label_first=True,
     )
-    b.para(t("brief.evidence_law", lang), note=True)
+    b.para(t("brief.note_mark", lang) + t("brief.evidence_law", lang))
 
 
 def _terms(b: Builder) -> None:

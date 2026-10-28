@@ -66,6 +66,14 @@ _FRAMEWORK_NOTICE = re.compile(
     r"|Your previous final response was rejected by the output contract validator"
     r"|You just executed tool calls but returned an empty response)"
 )
+_KANBAN_NOTICE = re.compile(r"^\s*\[kanban\]", re.IGNORECASE)
+# A sensitive keyword followed closely by a negation or a prevention word: "외부 유출에 해당하지 않아",
+# "유출 방지를 위해", "scp로 전송 안 해도 되게". Such inputs deny or prevent the act rather than ask for it.
+_DENIAL = re.compile(
+    r"(?:유출|반출|우회|전송|scp|외부로)[^.\n]{0,30}?(?:없|아니|않|방지|금지|안 ?[해되]|막|피하|피할|차단)"
+    r"|(?:방지|막기|차단|금지)[^.\n]{0,8}?(?:유출|반출|우회)",
+    re.IGNORECASE,
+)
 _GATEWAY_GENERATED = re.compile(r"\[INTERNAL NOTIFICATION [^\]]*not written by a human user")
 _SKILL_INVOKED = re.compile(
     r'^\s*\[IMPORTANT: The user has invoked the "(?P<skill>[^"]+)" skill[^\]]*\]', re.DOTALL
@@ -115,7 +123,12 @@ def normalise(text: str, source: str = "") -> tuple[str, str, str | None, bool]:
     skill = _SKILL_INVOKED.match(body)
     if skill is not None:
         return HUMAN, f"(스킬 실행 요청: {skill.group('skill')})", platform, False
-    if _AGENT_REPORT.match(body) or _GATEWAY_GENERATED.search(body) or _FRAMEWORK_NOTICE.match(body):
+    if (
+        _AGENT_REPORT.match(body)
+        or _GATEWAY_GENERATED.search(body)
+        or _FRAMEWORK_NOTICE.match(body)
+        or _KANBAN_NOTICE.match(body)
+    ):
         return "system_notice", body, platform, False
     attachment = False
     documents = [m.group("name") for m in _DOCUMENT.finditer(body)]
@@ -147,6 +160,10 @@ def normalise(text: str, source: str = "") -> tuple[str, str, str | None, bool]:
     return HUMAN, body or "(이미지 첨부)", platform, attachment
 
 
+def denies_sensitive(text: str) -> bool:
+    return _DENIAL.search(" ".join(text.split())) is not None
+
+
 def _topics(text: str) -> list[str]:
     flat = " ".join(text.split())
     return [rule for rule, pattern in catalog.TASK_RULES if pattern.search(flat)]
@@ -173,8 +190,11 @@ def build_questions(
         kind, text, platform, attachment = normalise(str(row.get("text") or ""), source)
         if kind != HUMAN:
             excluded[kind] += 1
-            if kind == "a2a":
-                ai_inputs.append(_ai_input(row, info, source, recorded_channel or "a2a"))
+            if kind in ("a2a", "automated"):
+                route = recorded_channel or (
+                    "a2a" if kind == "a2a" else "kanban" if "kanban" in source else "cron"
+                )
+                ai_inputs.append(_ai_input(row, info, source, route))
             continue
         machine = str(info.get("machine") or machine_of(source, row.get("tool")) or "-")
         channel = platform or recorded_channel
@@ -194,6 +214,7 @@ def build_questions(
             "text": text,
             "attachment": attachment,
             "topics": _topics(text),
+            "denial": denies_sensitive(text),
             "source": source,
             "artifact_id": row.get("artifact_id"),
             "duplicates": 0,

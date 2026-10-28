@@ -33,27 +33,29 @@ nav.toc p.l2 { padding-left: 8mm; }
 h3.machine { margin: 8mm 0 3mm; }
 .entry { margin: 0 0 4mm; }
 .entry .meta { margin: 0 0 1mm; text-align: left; font-family: var(--sans); font-size: 9pt; color: var(--muted); }
-.entry pre { margin: 0; padding: 1.2mm 2mm; border: var(--rule); font-family: var(--serif); font-size: 9.5pt; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.entry pre { margin: 0; padding: 1.2mm 2mm; border: var(--rule); font-family: var(--serif); font-size: 9.5pt; line-height: 1.6; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
 @media print { section.tool { break-before: page; } }
 """
 
 
 class _Session:
-    __slots__ = ("anchor", "label", "rows")
+    __slots__ = ("anchor", "file", "label", "rows")
 
     def __init__(self, label: str) -> None:
         self.rows: list[Mapping[str, Any]] = []
         self.anchor = ""
+        self.file = ""
         self.label = label
 
 
 class _Machine:
-    __slots__ = ("anchor", "instructions", "sessions")
+    __slots__ = ("anchor", "file", "instructions", "sessions")
 
     def __init__(self) -> None:
         self.instructions: list[Mapping[str, Any]] = []
         self.sessions: dict[str | None, _Session] = {}
         self.anchor = ""
+        self.file = ""
 
 
 def _tree(model: ReportModel) -> dict[str, dict[str, _Machine]]:
@@ -62,14 +64,14 @@ def _tree(model: ReportModel) -> dict[str, dict[str, _Machine]]:
     tree: dict[str, dict[str, _Machine]] = {}
     for row in model.ai_queries:
         machine = tree.setdefault(tool_label(row.get("tool"), lang), {}).setdefault(
-            machine_label(row, meta), _Machine()
+            machine_label(row, meta, lang), _Machine()
         )
         session = row.get("session")
         label = t("sec.session", lang, session=session) if session else t("sec.no_session", lang)
         machine.sessions.setdefault(session, _Session(label)).rows.append(row)
     for row in model.instructions:
         tree.setdefault(tool_label(row.get("tool"), lang), {}).setdefault(
-            machine_label(row, meta), _Machine()
+            machine_label(row, meta, lang), _Machine()
         ).instructions.append(row)
     return tree
 
@@ -85,25 +87,21 @@ def _entry(row: Mapping[str, Any]) -> str:
 def _toc(tree: dict[str, dict[str, _Machine]], lang: str, generated: bool = False) -> Iterator[str]:
     yield f'<nav class="toc" aria-label="{escape(t("vol.toc", lang))}">\n<h2>{escape(t("vol.toc", lang))}</h2>\n'
     for tool, machines in tree.items():
-        yield f'<p class="l1"><a href="#{machines_anchor(tool, tree)}">{escape(tool)}</a></p>\n'
+        yield f'<p class="l1">{escape(tool)}</p>\n'
         for name, machine in machines.items():
             count = len(machine.instructions) + sum(len(s.rows) for s in machine.sessions.values())
             yield (
-                f'<p class="l2"><a href="#{machine.anchor}">{escape(name)}</a> '
+                f'<p class="l2"><a href="{machine.file}#{machine.anchor}">{escape(name)}</a> '
                 f"({escape(t('vol.count', lang, n=count))})</p>\n"
             )
             for session in machine.sessions.values():
                 yield (
-                    f'<p class="l3"><a href="#{session.anchor}">{escape(session.label)}</a> '
+                    f'<p class="l3"><a href="{session.file}#{session.anchor}">{escape(session.label)}</a> '
                     f"({escape(t('vol.count', lang, n=len(session.rows)))})</p>\n"
                 )
     if generated:
         yield f'<p class="l1"><a href="#{GENERATED_ANCHOR}">{escape(t("vol.generated", lang))}</a></p>\n'
     yield "</nav>\n"
-
-
-def machines_anchor(tool: str, tree: dict[str, dict[str, _Machine]]) -> str:
-    return f"t{list(tree).index(tool) + 1}"
 
 
 def _assign_anchors(tree: dict[str, dict[str, _Machine]]) -> None:
@@ -120,22 +118,42 @@ def _assign_anchors(tree: dict[str, dict[str, _Machine]]) -> None:
                 session.anchor = f"{machine.anchor}s{si}"
 
 
-def _body(tree: dict[str, dict[str, _Machine]], lang: str) -> Iterator[str]:
-    for ti, (tool, machines) in enumerate(tree.items(), start=1):
-        yield f'<section class="tool">\n<h2 id="t{ti}">{escape(tool)}</h2>\n'
+def _parts(tree: dict[str, dict[str, _Machine]], lang: str, folder: str) -> list[tuple[str, list[str]]]:
+    """Split the messages into files of about PART_BYTES each, one machine per file group, and record
+    on every machine and session the file that holds it."""
+    parts: list[tuple[str, list[str]]] = []
+    for tool, machines in tree.items():
         for name, machine in machines.items():
-            yield f'<h3 class="machine" id="{machine.anchor}">{escape(name)}</h3>\n'
+            index = 1
+            machine.file = f"{folder}/{machine.anchor}-{index}.html"
+            head = [
+                f'<h2>{escape(tool)}</h2>\n<h3 class="machine" id="{machine.anchor}">{escape(name)}</h3>\n'
+            ]
+            chunk = list(head)
+            size = 0
             if machine.instructions:
-                yield f"<h4>{escape(t('vol.instructions', lang))}</h4>\n"
+                chunk.append(f"<h4>{escape(t('vol.instructions', lang))}</h4>\n")
                 for row in machine.instructions:
-                    yield _entry(row)
+                    entry = _entry(row)
+                    chunk.append(entry)
+                    size += len(entry.encode("utf-8"))
             for session in machine.sessions.values():
-                yield f'<h4 id="{session.anchor}">{escape(session.label)}</h4>\n'
+                if size >= PART_BYTES:
+                    parts.append((f"{machine.anchor}-{index}.html", chunk))
+                    index += 1
+                    chunk = list(head)
+                    size = 0
+                session.file = f"{folder}/{machine.anchor}-{index}.html"
+                chunk.append(f'<h4 id="{session.anchor}">{escape(session.label)}</h4>\n')
                 for row in session.rows:
-                    yield _entry(row)
-        yield "</section>\n"
+                    entry = _entry(row)
+                    chunk.append(entry)
+                    size += len(entry.encode("utf-8"))
+            parts.append((f"{machine.anchor}-{index}.html", chunk))
+    return parts
 
 
+PART_BYTES = 8_000_000  # one part file stays well under what an ordinary browser tab opens smoothly
 GENERATED_ANCHOR = "generated"
 
 
@@ -306,8 +324,9 @@ def render_questions_volume(model: ReportModel, out_path: Path | str) -> Path:
     return path
 
 
-def render_prompts_volume(model: ReportModel, out_path: Path | str) -> Path:
-    """Write the companion volume `prompts.html` and return its path."""
+def render_prompts_volume(model: ReportModel, out_path: Path | str) -> list[Path]:
+    """Write the companion volume: an index `prompts.html` and the messages in `prompts/*.html` parts small
+    enough for an ordinary browser. Returns every written path, index first."""
     lang = str(model.case.get("lang") or DEFAULT_LANG)
     if lang not in SUPPORTED_LANGS:
         lang = DEFAULT_LANG
@@ -323,13 +342,29 @@ def render_prompts_volume(model: ReportModel, out_path: Path | str) -> Path:
     tree = _tree(model)
     _assign_anchors(tree)
     messages = len(model.ai_queries)
+    head = (
+        f'<!DOCTYPE html>\n<html lang="{lang}">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>{escape(title)} - {escape(str(model.case.get('number') or ''))}</title>\n"
+        f'<style>\n{css}{_EXTRA_CSS}</style>\n</head>\n<body>\n<div class="sheet">\n'
+    )
+    folder = path.stem
+    parts = _parts(tree, lang, folder)
+    written = [path]
+    if parts:
+        (path.parent / folder).mkdir(parents=True, exist_ok=True)
+    back = f'<p><a href="../{path.name}">{escape(t("vol.back", lang))}</a></p>\n'
+    for name, chunk in parts:
+        part = path.parent / folder / name
+        with part.open("w", encoding="utf-8") as fh:
+            fh.write(head)
+            fh.write(back)
+            fh.writelines(chunk)
+            fh.write(back)
+            fh.write("</div>\n</body>\n</html>\n")
+        written.append(part)
     with path.open("w", encoding="utf-8") as fh:
-        fh.write(
-            f'<!DOCTYPE html>\n<html lang="{lang}">\n<head>\n<meta charset="utf-8">\n'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-            f"<title>{escape(title)} - {escape(str(model.case.get('number') or ''))}</title>\n"
-            f'<style>\n{css}{_EXTRA_CSS}</style>\n</head>\n<body>\n<div class="sheet">\n'
-        )
+        fh.write(head)
         fh.write(
             f'<section class="cover">\n<h1>{escape(title)}</h1>\n'
             f"<p>{escape(t('vol.intro', lang, m=messages, i=len(model.instructions)))}</p>\n"
@@ -339,8 +374,7 @@ def render_prompts_volume(model: ReportModel, out_path: Path | str) -> Path:
             fh.write(f"<p>{escape(t('vol.none', lang))}</p>\n")
         else:
             fh.writelines(_toc(tree, lang, bool(model.generated_files)))
-            fh.writelines(_body(tree, lang))
             if model.generated_files:
                 fh.writelines(_generated(model, lang))
         fh.write("</div>\n</body>\n</html>\n")
-    return path
+    return written

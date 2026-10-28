@@ -382,7 +382,7 @@ def test_cover_tools_and_methodology(full_store: CaseStore) -> None:
     for needle in ("ISO/IEC 27037", "ISO/IEC 27042", "NIST SP 800-86", "ACPO"):
         assert needle in standards
     validation = model.methodology["tool_validation"]
-    assert "validated against the synthetic fixtures documented in docs/validation.md" in validation
+    assert "docs/" not in validation
     assert "0.1.0" in validation
     assert model.evidence[0]["verification_status"] == "match"
     assert model.evidence[0]["acquisition_hashes"] == {"md5": "aa"}
@@ -704,17 +704,17 @@ def test_display_fields_ko(tmp_path: Path) -> None:
     assert life["display_title"] == "파일 이력: /Users/kim/a.md"
     assert life["display_steps"] == ["2026-03-01 18:00:00 (+09:00) 생성", "2026-03-01 20:00:00 (+09:00) 삭제"]
     assert life["severity_label"] == "중간"
-    assert life["limitations_display"] == ["USB 연결 기록은 파일 복사를 증명하지 않는다."]
+    assert life["limitations_display"] == ["USB 연결 기록은 파일 복사를 증명하지 않음."]
     ex = model.exfil[0]
     assert ex["display_channel"] == "scp 전송 \u2192 203.0.113.10"
     assert ex["severity_label"] == "높음" and ex["actor_label"] == "사람"
     assert ex["source_name"] == "secret.zip" and ex["ts_local"] == "2026-03-01 18:30:00 (+09:00)"
     att = model.attribution[0]
     assert att["verdict_label"] == "판단 불가" and att["band_label"] == "약함"
-    assert att["limitations_display"] == ["시간적 근접성만으로는 인과관계를 증명할 수 없다."]
+    assert att["limitations_display"] == ["시간적 근접성만으로는 인과관계를 증명할 수 없음."]
     assert att["signals_summary"] == "시간적 근접 (AI)"
     assert all(r["category_label"] and r["actor_label"] for r in model.timeline)
-    assert "시스템 시계 오차로 시각이 실제와 다를 수 있다." in model.limitations
+    assert "시스템 시계 오차로 시각이 실제와 다를 수 있음." in model.limitations
 
 
 def test_display_fields_en_and_label_tables() -> None:

@@ -119,37 +119,48 @@ def _assign_anchors(tree: dict[str, dict[str, _Machine]]) -> None:
 
 
 def _parts(tree: dict[str, dict[str, _Machine]], lang: str, folder: str) -> list[tuple[str, list[str]]]:
-    """Split the messages into files of about PART_BYTES each, one machine per file group, and record
-    on every machine and session the file that holds it."""
+    """Pack the messages in order into files of about PART_BYTES each (a long session may continue in the
+    next file) and record on every machine and session the file where it starts."""
     parts: list[tuple[str, list[str]]] = []
+    chunk: list[str] = []
+    size = 0
+
+    def name() -> str:
+        return f"part-{len(parts) + 1:03d}.html"
+
+    def room(heading: str) -> None:
+        nonlocal chunk, size
+        if size >= PART_BYTES:
+            parts.append((name(), chunk))
+            chunk, size = [heading], 0
+
     for tool, machines in tree.items():
-        for name, machine in machines.items():
-            index = 1
-            machine.file = f"{folder}/{machine.anchor}-{index}.html"
-            head = [
-                f'<h2>{escape(tool)}</h2>\n<h3 class="machine" id="{machine.anchor}">{escape(name)}</h3>\n'
-            ]
-            chunk = list(head)
-            size = 0
+        for label, machine in machines.items():
+            room("")
+            head = (
+                f'<h2>{escape(tool)}</h2>\n<h3 class="machine" id="{machine.anchor}">{escape(label)}</h3>\n'
+            )
+            machine.file = f"{folder}/{name()}"
+            chunk.append(head)
             if machine.instructions:
                 chunk.append(f"<h4>{escape(t('vol.instructions', lang))}</h4>\n")
                 for row in machine.instructions:
+                    room(head)
                     entry = _entry(row)
                     chunk.append(entry)
                     size += len(entry.encode("utf-8"))
             for session in machine.sessions.values():
-                if size >= PART_BYTES:
-                    parts.append((f"{machine.anchor}-{index}.html", chunk))
-                    index += 1
-                    chunk = list(head)
-                    size = 0
-                session.file = f"{folder}/{machine.anchor}-{index}.html"
-                chunk.append(f'<h4 id="{session.anchor}">{escape(session.label)}</h4>\n')
+                room(head)
+                session.file = f"{folder}/{name()}"
+                heading = f'<h4 id="{session.anchor}">{escape(session.label)}</h4>\n'
+                chunk.append(heading)
                 for row in session.rows:
+                    room(head + heading.replace(f' id="{session.anchor}"', ""))
                     entry = _entry(row)
                     chunk.append(entry)
                     size += len(entry.encode("utf-8"))
-            parts.append((f"{machine.anchor}-{index}.html", chunk))
+    if chunk:
+        parts.append((name(), chunk))
     return parts
 
 

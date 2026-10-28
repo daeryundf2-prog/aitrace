@@ -738,7 +738,7 @@ def _ai_queries_section(
         event = first_event.get(a.id)
         ts: datetime | None = event.ts_utc if event is not None else None
         role = str(a.data.get("role", "unknown"))
-        actor = _message_actor(a, _query_actor(role, event.actor if event is not None else None))
+        actor = _query_actor(role, event.actor if event is not None else None)
         row = {
             "ts_utc": fmt_utc(ts) if ts is not None else None,
             "ts_local": fmt_local(ts, tz) if ts is not None else None,
@@ -747,7 +747,7 @@ def _ai_queries_section(
             "role": role,
             "role_label": _enum_label("role", role, lang),
             "actor": actor,
-            "actor_label": _enum_label("actor", actor, lang),
+            "actor_label": _enum_label("actor", _message_actor(a, actor), lang),
             "text": a.data.get("text", ""),
             "source": a.provenance.source_path,
             "source_name": _basename(a.provenance.source_path),
@@ -1247,13 +1247,13 @@ def build_report_model(
                 "ts_utc": fmt_utc(e.ts_utc) if e.ts_utc is not None else None,
                 "ts_local": fmt_local(e.ts_utc, tz) if e.ts_utc is not None else None,
                 "category": e.category.value,
-                "actor": (actor := _message_actor(art, e.actor.value)),
+                "actor": e.actor.value,
                 "user": e.user,
                 "summary": e.summary,
                 "source_path": source_paths.get(e.artifact_id),
                 "artifact_id": e.artifact_id,
                 "category_label": _enum_label("category", e.category.value, lang),
-                "actor_label": _enum_label("actor", actor, lang),
+                "actor_label": _enum_label("actor", _message_actor(art, e.actor.value), lang),
             }
         )
         if (

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from aitrace.analyzers.attribution import ANALYZER, decide
+from aitrace.analyzers.attribution import AGENT_RECORD_LIMITATION, ANALYZER, decide
 from aitrace.core import catalog
 from aitrace.core.ids import make_id
 from aitrace.core.kinds import (
@@ -369,3 +369,48 @@ def test_download_origin_with_ai_service_adds_download_signal(store: CaseStore) 
     assert [s.type for s in attrs[path].signals] == [SignalType.AI_DOWNLOAD_ORIGIN]
     assert attrs[path].signals[0].artifact_ids == ("do1",)
     assert attrs[path].confidence == pytest.approx(0.75)
+
+
+def test_agent_output_record_is_ai_generated_with_own_record_limitation(store: CaseStore) -> None:
+    path = "/case/cron/output/ja/2026-10-01_09-00-00.md"
+    later = T0 + timedelta(days=3)
+    store.add(
+        [
+            _art(
+                "rec1",
+                ArtifactKind.AI_TOOL_CALL,
+                {
+                    "tool": "Hermes Agent",
+                    "session_id": "cron:ja",
+                    "call_name": "cron_output",
+                    "input": {"job_id": "ja"},
+                    "file_path": path,
+                    "content": "scrubbed text that differs from the file bytes",
+                },
+            ),
+            _event("rec1", T0),
+            _file("f1", path, content="original file text", mtime=later),
+        ]
+    )
+    attrs, _ = _run(store)
+    att = attrs[path]
+    assert att.verdict is Verdict.AI_GENERATED
+    assert att.confidence == pytest.approx(0.90)
+    assert [s.type for s in att.signals] == [SignalType.AGENT_TOOL_WRITE]
+    assert att.limitations[0] == AGENT_RECORD_LIMITATION
+    assert set(att.subject_artifact_ids) == {"rec1", "f1"}
+
+
+def test_unknown_call_name_without_write_semantics_is_ignored(store: CaseStore) -> None:
+    store.add(
+        [
+            _art(
+                "x1",
+                ArtifactKind.AI_TOOL_CALL,
+                {"tool": "Hermes Agent", "session_id": "s", "call_name": "cron_listing", "input": {}, "file_path": "/a"},
+            ),
+            _event("x1", T0),
+        ]
+    )
+    attrs, _ = _run(store)
+    assert attrs == {}

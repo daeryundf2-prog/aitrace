@@ -66,6 +66,13 @@ _SOUL = re.compile(r"^(?:.*[_.])?SOUL(?:\.[^/]*)?\.md(?:\.bak.*)?$")
 _TEMPLATE = re.compile(r"^.+\.md\.tmpl(?:\.bak.*)?$")
 _CRON_JOBS = re.compile(r"^(?:jobs\.json(?:\.bak.*)?|.+_jobs\.json)$")
 _CRON_PROMPT = re.compile(r"^prompt_.*\.txt$")
+_CRON_OUTPUT = re.compile(r"^(?P<ts>\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)\.md$")
+_OUT_NAME = re.compile(r"^# Cron Job:\s*(?P<name>.+?)\s*$", re.MULTILINE)
+_OUT_MODE = re.compile(r"^\*\*Mode:\*\*\s*(?P<mode>.+?)\s*$", re.MULTILINE)
+_OUT_STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<status>.+?)\s*$", re.MULTILINE)
+_OUT_SECTION = re.compile(r"^## (?P<title>Prompt|Response)\s*$", re.MULTILINE)
+_SILENT = "[SILENT]"
+PROMPT_EXCERPT_CHARS = 300
 _GATEWAY_RECEIPTS = re.compile(r"^telegram_update_receipts_.*\.json$")
 _A2A_NOTES = re.compile(r"^_?a2a_.*\.md$")
 _HERMES_DIRS = frozenset({"hermes_dot", ".hermes", "hermes_root"})
@@ -80,6 +87,8 @@ _A2A_ROLES = {
 }
 _ACTORS = {"user": Actor.HUMAN, "assistant": Actor.AI, "system": Actor.SYSTEM}
 _HUMAN_AUTHORS = frozenset({"user", "human"})
+_DELIVERY_COLUMNS = ("execution_id", "job_json", "content", "status", "created_at", "finished_at")
+_DONE_STATUSES = frozenset({"done", "completed", "complete"})
 _EXECUTION_COLUMNS = ("id", "job_id", "status", "source", "started_at", "claimed_at", "finished_at")
 _TASK_COLUMNS = (
     "id",
@@ -197,6 +206,7 @@ class _Found:
     singles: list[Candidate] = field(default_factory=list)
     instructions: list[EntryRef] = field(default_factory=list)
     cron_jobs: list[EntryRef] = field(default_factory=list)
+    cron_outputs: list[EntryRef] = field(default_factory=list)
     secrets: list[Candidate] = field(default_factory=list)
 
 
@@ -228,7 +238,13 @@ class Plugin(PluginBase):
                 )
             if found.cron_jobs:
                 yield Candidate(ref=found.cron_jobs[0], role="cron_jobs", extra={"refs": found.cron_jobs})
-            if found.singles or found.instructions or found.cron_jobs:
+            if found.cron_outputs:
+                yield Candidate(
+                    ref=found.cron_outputs[0],
+                    role="cron_outputs",
+                    extra={"refs": found.cron_outputs, "jobs": found.cron_jobs},
+                )
+            if found.singles or found.instructions or found.cron_jobs or found.cron_outputs:
                 yield from found.secrets
 
     def _classify(self, fs: EvidenceFS, ref: EntryRef, found: _Found) -> None:
@@ -265,6 +281,11 @@ class Plugin(PluginBase):
         if _CRON_PROMPT.match(name) and "output" in parts and "cron" in parts:
             if self._small(fs, ref):
                 found.singles.append(Candidate(ref=ref, role="cron_prompt"))
+            return
+        if _CRON_OUTPUT.match(name) and "output" in parts and "cron" in parts:
+            size = fs.stat(ref).size
+            if size is not None and size <= MAX_OPEN_BYTES:
+                found.cron_outputs.append(ref)
             return
         lowered = name.lower()
         if lowered.endswith(".jsonl"):
@@ -321,6 +342,8 @@ class Plugin(PluginBase):
                 yield from self._cron_deliveries(ctx, cand)
             case "cron_prompt":
                 yield from self._cron_prompt(ctx, cand)
+            case "cron_outputs":
+                yield from self._cron_outputs(ctx, cand)
             case "instructions":
                 yield from self._instructions(ctx, cand)
             case "shell":
@@ -746,6 +769,7 @@ class Plugin(PluginBase):
             try:
                 tables = self._db_tables(conn)
                 rows = list(self._kanban_rows(conn, tables))
+                outputs = list(self._kanban_outputs(conn, tables))
             except sqlite3.DatabaseError as exc:
                 yield from self._db_failed(ctx, cand, exc, "kanban")
                 return
@@ -774,6 +798,24 @@ class Plugin(PluginBase):
                 model=row["model"],
                 title=row["title"],
                 recovered_from="sqlite",
+            )
+        for out in outputs:
+            record = out["record"]
+            yield from self._output_call(
+                ctx,
+                cand,
+                f"row:{record}",
+                call_name=out["call_name"],
+                file_path=out["file_path"] or f"{cand.ref.path}#{record}",
+                content=out["content"],
+                inputs=out["inputs"],
+                session_id=out["inputs"]["task_id"],
+                ts=out["ts"],
+                ts_kind=out["ts_kind"],
+                ts_basis="native_utc",
+                summary=f"{TOOL} kanban {out['call_name'].removeprefix('kanban_')}: "
+                f"{out['inputs'].get('task_title') or out['inputs']['task_id']}",
+                extra={"source_kind": out["call_name"], "record": record},
             )
         yield self._presence(
             ctx,
@@ -862,6 +904,77 @@ class Plugin(PluginBase):
                 },
                 "model": None,
                 "title": None,
+            }
+
+    @staticmethod
+    def _kanban_outputs(conn: sqlite3.Connection, tables: dict[str, list[str]]) -> Iterator[dict[str, Any]]:
+        """Completed task results (result, else the latest run summary) and agent-uploaded attachments."""
+
+        def select(table: str, wanted: tuple[str, ...]) -> list[dict[str, Any]]:
+            cols = [c for c in wanted if c in tables.get(table, [])]
+            if not cols:
+                return []
+            sql = "SELECT " + ", ".join(f'"{c}"' for c in cols) + f' FROM "{table}" ORDER BY rowid'
+            return [dict(zip(cols, values, strict=True)) for values in conn.execute(sql)]
+
+        summaries: dict[str, tuple[Any, str]] = {}
+        for run in select("task_runs", ("id", "task_id", "summary", "ended_at")):
+            summary = _text_or_none(run.get("summary"))
+            if summary is None:
+                continue
+            task_id = str(run.get("task_id"))
+            ended = run.get("ended_at") or 0
+            current = summaries.get(task_id)
+            if current is None or ended >= current[0]:
+                summaries[task_id] = (ended, summary)
+        titles: dict[str, str | None] = {}
+        for task in select("tasks", ("id", "title", "status", "assignee", "completed_at", "result")):
+            tid = str(task.get("id"))
+            title = _text_or_none(task.get("title"))
+            titles[tid] = title
+            done = str(task.get("status") or "").casefold() in _DONE_STATUSES or task.get("completed_at")
+            if not done:
+                continue
+            result = _text_or_none(task.get("result"))
+            text = result or (summaries[tid][1] if tid in summaries else None)
+            if text is None:
+                continue
+            yield {
+                "call_name": "kanban_result",
+                "record": f"tasks.id={tid}:{'result' if result else 'task_runs.summary'}",
+                "file_path": None,
+                "content": text,
+                "ts": _epoch(task.get("completed_at")),
+                "ts_kind": "completed_at",
+                "inputs": {
+                    "task_id": tid,
+                    "task_title": title,
+                    "assignee": task.get("assignee"),
+                    "status": task.get("status"),
+                },
+            }
+        wanted = ("id", "task_id", "filename", "stored_path", "size", "uploaded_by", "created_at")
+        for att in select("task_attachments", wanted):
+            uploader = str(att.get("uploaded_by") or "")
+            if not uploader or uploader.casefold() in _HUMAN_AUTHORS:
+                continue
+            tid = str(att.get("task_id"))
+            stored = _text_or_none(att.get("stored_path"))
+            name = _text_or_none(att.get("filename"))
+            yield {
+                "call_name": "kanban_attachment",
+                "record": f"task_attachments.id={att.get('id')}",
+                "file_path": stored or name,
+                "content": None,
+                "ts": _epoch(att.get("created_at")),
+                "ts_kind": "attachment_created",
+                "inputs": {
+                    "task_id": tid,
+                    "task_title": titles.get(tid),
+                    "filename": name,
+                    "size": att.get("size"),
+                    "uploaded_by": uploader,
+                },
             }
 
     def _version_ts(self, ctx: ParseContext, ref: EntryRef, tz: str) -> tuple[datetime | None, str, str]:
@@ -1027,11 +1140,22 @@ class Plugin(PluginBase):
                 statuses = {
                     str(s): n for s, n in conn.execute('SELECT status, COUNT(*) FROM "deliveries" GROUP BY 1')
                 }
+                cols = [c for c in _DELIVERY_COLUMNS if c in tables["deliveries"]]
+                delivered: list[dict[str, Any]] = []
+                if "content" in cols:
+                    sql = (
+                        "SELECT " + ", ".join(f'"{c}"' for c in cols) + ' FROM "deliveries" '
+                        "WHERE status = 'delivered' AND content IS NOT NULL AND length(trim(content)) > 0 "
+                        "ORDER BY rowid"
+                    )
+                    delivered = [dict(zip(cols, values, strict=True)) for values in conn.execute(sql)]
             except sqlite3.DatabaseError as exc:
                 yield from self._db_failed(ctx, cand, exc, "cron_deliveries")
                 return
         finally:
             conn.close()
+        for row in delivered:
+            yield from self._delivery(ctx, cand, row)
         total = sum(statuses.values())
         yield self._presence(
             ctx,
@@ -1040,6 +1164,43 @@ class Plugin(PluginBase):
             "parsed",
             f"{total} cron deliver(ies) in {cand.ref.path}",
             extra={"source_kind": "cron_deliveries", "deliveries": total, "statuses": statuses},
+        )
+
+    def _delivery(self, ctx: ParseContext, cand: Candidate, row: dict[str, Any]) -> Iterator[Artifact | Event]:
+        execution_id = str(row.get("execution_id"))
+        job: dict[str, Any] = {}
+        extra: dict[str, Any] = {"source_kind": "cron_delivery", "execution_id": execution_id}
+        extra["status"] = row.get("status")
+        raw_job = row.get("job_json")
+        if isinstance(raw_job, str) and raw_job.strip():
+            try:
+                loaded = json.loads(raw_job)
+            except json.JSONDecodeError as exc:
+                extra["job_json_error"] = exc.msg
+                loaded = None
+            if isinstance(loaded, dict):
+                job = loaded
+        raw_ts = row.get("finished_at") or row.get("created_at")
+        ts = from_iso(raw_ts) if isinstance(raw_ts, str) else _epoch(raw_ts)
+        job_id = str(job.get("id")) if job.get("id") is not None else None
+        name = job.get("name") if isinstance(job.get("name"), str) else None
+        raw_prompt = job.get("prompt")
+        prompt = raw_prompt if isinstance(raw_prompt, str) else ""
+        record = f"deliveries.execution_id={execution_id}"
+        yield from self._output_call(
+            ctx,
+            cand,
+            f"row:{record}",
+            call_name="cron_delivery",
+            file_path=f"{cand.ref.path}#{record}",
+            content=str(row.get("content")),
+            inputs={"job_id": job_id, "job_name": name, "prompt_excerpt": _prompt_excerpt(prompt)},
+            session_id=f"cron:{job_id or execution_id}",
+            ts=ts,
+            ts_kind="delivered",
+            ts_basis="native_utc",
+            summary=f"{TOOL} cron delivery: {name or job_id or execution_id}",
+            extra=extra,
         )
 
     def _cron_prompt(self, ctx: ParseContext, cand: Candidate) -> Iterator[Artifact | Event]:
@@ -1062,6 +1223,145 @@ class Plugin(PluginBase):
             extra=extra,
             ts_kind=ts_kind,
         )
+
+    def _output_call(
+        self,
+        ctx: ParseContext,
+        cand: Candidate,
+        locator: str,
+        *,
+        call_name: str,
+        file_path: str,
+        content: str | None,
+        inputs: dict[str, Any],
+        session_id: str,
+        ts: datetime | None,
+        ts_kind: str,
+        ts_basis: str,
+        summary: str,
+        extra: dict[str, Any],
+    ) -> Iterator[Artifact | Event]:
+        """AI_TOOL_CALL for an output the agent itself recorded (cron output file, delivery, kanban result)."""
+        data: dict[str, Any] = {
+            "tool": TOOL,
+            "session_id": session_id,
+            "call_name": call_name,
+            "input": {k: scrub(v) if isinstance(v, str) else v for k, v in inputs.items()},
+            "file_path": file_path,
+        }
+        if content is not None:
+            data["content"] = scrub(content)
+        data["extra"] = {"recorded_output": True, **extra}
+        artifact = self.artifact(ctx, cand, ArtifactKind.AI_TOOL_CALL, data, locator=locator)
+        yield artifact
+        yield self.event(
+            artifact,
+            ts,
+            ts_kind,
+            EventCategory.AI_ACTIVITY,
+            Actor.AI,
+            scrub(summary),
+            ts_basis=ts_basis if ts is not None else "unknown",
+        )
+
+    def _jobs_index(self, ctx: ParseContext, refs: list[EntryRef], tz: str) -> dict[str, dict[str, Any]]:
+        """job id -> job dict from every jobs file version; the newest version of a job wins."""
+        versions: list[tuple[datetime | None, str, list[Any]]] = []
+        for ref in refs:
+            try:
+                doc = json.loads(ctx.fs.read_bytes(ref).decode("utf-8", errors="replace"))
+            except json.JSONDecodeError:
+                continue  # the cron_jobs candidate reports this same file as a PARSE_WARNING
+            jobs = doc.get("jobs") if isinstance(doc, dict) else doc
+            if isinstance(jobs, list):
+                versions.append((self._version_ts(ctx, ref, tz)[0], ref.path, jobs))
+        versions.sort(key=lambda v: (v[0] is not None, v[0] or datetime.min, v[1]))
+        index: dict[str, dict[str, Any]] = {}
+        for _, _, jobs in versions:
+            for job in jobs:
+                if isinstance(job, dict) and job.get("id") is not None:
+                    index[str(job["id"])] = job
+        return index
+
+    def _cron_outputs(self, ctx: ParseContext, cand: Candidate) -> Iterator[Artifact | Event]:
+        """cron/output/<job_id>/<YYYY-MM-DD_HH-MM-SS>.md: agent-mode responses are AI outputs, the rest counted."""
+        tz = export_tz()
+        jobs = self._jobs_index(ctx, cand.extra.get("jobs") or [], tz)
+        by_job: dict[str, list[EntryRef]] = {}
+        for ref in cand.extra["refs"]:
+            by_job.setdefault(posixpath.basename(posixpath.dirname(ref.path)), []).append(ref)
+        for job_id, refs in sorted(by_job.items()):
+            refs.sort(key=lambda r: r.path)
+            job = jobs.get(job_id) or {}
+            counts = {"outputs": 0, "agent_outputs": 0, "script_outputs": 0, "silent": 0, "failed": 0, "other": 0}
+            stamps: list[datetime] = []
+            job_name = job.get("name") if isinstance(job.get("name"), str) else None
+            no_agent = job.get("no_agent") is True
+            for ref in refs:
+                match = _CRON_OUTPUT.match(posixpath.basename(ref.path))
+                assert match is not None  # locate() only collects names matching _CRON_OUTPUT
+                ts = from_local_naive(datetime.strptime(match.group("ts"), "%Y-%m-%d_%H-%M-%S"), tz)
+                if ts is not None:
+                    stamps.append(ts)
+                text = ctx.fs.read_bytes(ref).decode("utf-8", errors="replace")
+                parsed = _parse_output(text)
+                no_agent = no_agent or str(parsed["mode"] or "").startswith("no_agent")
+                job_name = job_name or parsed["name"]
+                counts["outputs"] += 1
+                kind = _output_kind(parsed)
+                counts[kind] += 1
+                if kind == "script_outputs" and parsed["failed"]:
+                    counts["failed"] += 1
+                if kind != "agent_outputs":
+                    continue
+                prompt = job.get("prompt") if isinstance(job.get("prompt"), str) else parsed["prompt"]
+                name = job.get("name") if isinstance(job.get("name"), str) else parsed["name"]
+                inputs: dict[str, Any] = {
+                    "job_id": job_id,
+                    "job_name": name,
+                    "prompt_excerpt": _prompt_excerpt(prompt or ""),
+                    "schedule": job.get("schedule_display"),
+                    "model": job.get("model"),
+                }
+                yield from self._output_call(
+                    ctx,
+                    Candidate(ref=ref, role=cand.role),
+                    "file",
+                    call_name="cron_output",
+                    file_path=ref.path,
+                    content=text,
+                    inputs=inputs,
+                    session_id=f"cron:{job_id}",
+                    ts=ts,
+                    ts_kind="file_name_run_time",
+                    ts_basis=f"assumed:{tz}",
+                    summary=f"{TOOL} cron output: {name or job_id}",
+                    extra={
+                        "source_kind": "cron_output",
+                        "response_chars": len(parsed["response"]),
+                        "ts_assumed_tz": tz,
+                    },
+                )
+            if counts["agent_outputs"] or (job and not no_agent):
+                mode = "agent"
+            else:
+                mode = "script" if no_agent else "unknown"
+            yield self._presence(
+                ctx,
+                Candidate(ref=refs[0], role=cand.role),
+                "store",
+                "parsed",
+                f"cron output {job_id}: {counts['outputs']} file(s), {counts['agent_outputs']} agent response(s)",
+                stamps,
+                {
+                    "source_kind": "cron_output_summary",
+                    "job_id": job_id,
+                    "job_name": job_name,
+                    "mode": mode,
+                    "ts_assumed_tz": tz,
+                    **counts,
+                },
+            )
 
     def _instructions(self, ctx: ParseContext, cand: Candidate) -> Iterator[Artifact | Event]:
         tz = export_tz()
@@ -1178,6 +1478,51 @@ class Plugin(PluginBase):
                     {"tool": TOOL, "provider": provider, "redacted": redacted, "line": number},
                     locator=f"line:{number}:{redacted}",
                 )
+
+
+def _parse_output(text: str) -> dict[str, Any]:
+    """Header fields and the Prompt / Response sections of one cron output markdown file."""
+    name = _OUT_NAME.search(text)
+    mode = _OUT_MODE.search(text)
+    status = _OUT_STATUS.search(text)
+    sections: dict[str, tuple[int, int]] = {}
+    for match in _OUT_SECTION.finditer(text):
+        sections.setdefault(match.group("title"), (match.start(), match.end()))
+    prompt = ""
+    response = ""
+    if "Response" in sections:
+        response = text[sections["Response"][1] :].strip()
+        if "Prompt" in sections and sections["Prompt"][1] <= sections["Response"][0]:
+            prompt = text[sections["Prompt"][1] : sections["Response"][0]].strip()
+    status_text = status.group("status") if status is not None else ""
+    return {
+        "name": name.group("name") if name is not None else None,
+        "mode": mode.group("mode") if mode is not None else None,
+        "status": status_text,
+        "failed": "fail" in status_text.lower(),
+        "prompt": prompt,
+        "response": response,
+    }
+
+
+def _output_kind(parsed: dict[str, Any]) -> str:
+    mode = parsed["mode"] or ""
+    if mode.startswith("no_agent"):
+        return "silent" if parsed["status"].lower().startswith("silent") else "script_outputs"
+    response = parsed["response"]
+    if response and response != _SILENT:
+        return "agent_outputs"
+    return "silent" if response == _SILENT else "other"
+
+
+_CRON_PREAMBLE = re.compile(r"^\s*\[IMPORTANT:.*?\]\s*\n\s*\n", re.DOTALL)
+
+
+def _prompt_excerpt(prompt: str) -> str:
+    """Job prompt without the scheduler's '[IMPORTANT: ...]' preamble, cut to PROMPT_EXCERPT_CHARS."""
+    body = _CRON_PREAMBLE.sub("", prompt, count=1).strip()
+    flat = " ".join(body.split())
+    return flat if len(flat) <= PROMPT_EXCERPT_CHARS else flat[:PROMPT_EXCERPT_CHARS].rstrip() + "\u2026"
 
 
 def _unwrap_oob(text: str) -> tuple[str, dict[str, Any] | None, bool]:

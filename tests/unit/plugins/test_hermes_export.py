@@ -365,7 +365,10 @@ def test_cron_jobs_versions_executions_deliveries_and_output_prompts() -> None:
     stores = {a.data["extra"]["source_kind"]: a for a in _kind(records, ArtifactKind.AI_APP_PRESENCE)}
     assert stores["cron_executions"].data["extra"]["executions"] == 2
     assert stores["cron_deliveries"].data["extra"]["statuses"] == {"delivered": 1}
-    assert "secret body" not in json.dumps([r.to_dict() for r in records])
+    (delivery,) = [c for c in _kind(records, ArtifactKind.AI_TOOL_CALL) if c.data["call_name"] == "cron_delivery"]
+    assert delivery.data["content"] == "secret body"
+    assert delivery.data["file_path"] == "/c/cron/deliveries.db#deliveries.execution_id=e1"
+    assert delivery.provenance.record_locator == "row:deliveries.execution_id=e1"
     (prompt,) = _messages(records, "cron_output_prompt")
     assert prompt.data["text"] == "rendered prompt" and prompt.data["session_id"] == "cron:ja"
     assert _event_for(records, prompt).ts_utc == datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
@@ -548,3 +551,94 @@ def test_cli_analyze_extracted_layout_fills_instructions_and_queries(tmp_path: P
     assert any(q["text"] == "inner question here" and q["ts_utc"] for q in users)
     assert any(tool.get("tool") == "Hermes Agent" for tool in report["ai_tools"])
     assert report["timeline"]
+
+
+def _cron_out(name: str, body: str) -> bytes:
+    return f"# Cron Job: {name}\n\n{body}".encode()
+
+
+def test_cron_output_agent_responses_become_output_records_with_per_job_counts() -> None:
+    preamble = '[IMPORTANT: scheduled run. SILENT: say "[SILENT]" and nothing more.]\n\n'
+    job_a = {"id": "ja", "name": "daily", "prompt": preamble + "summarise   news", "schedule_display": "0 9 * * *"}
+    job_b = {"id": "jb", "name": "probe", "prompt": "", "script": "x.py", "no_agent": True}
+    agent = "**Job ID:** ja\n**Run Time:** 2026-10-01 09:00:00\n\n## Prompt\n\nignored\n\n## Response\n\n## Summary\nall good\n"
+    files = {
+        "/c/cron/jobs.json": _jobs(job_a, job_b),
+        "/c/cron/output/ja/2026-10-01_09-00-00.md": _cron_out("daily", agent),
+        "/c/cron/output/ja/2026-10-02_09-00-00.md": _cron_out("daily", "## Prompt\n\np\n\n## Response\n\n[SILENT]\n"),
+        "/c/cron/output/jb/2026-10-01_09-00-00.md": _cron_out(
+            "probe", "**Mode:** no_agent (script)\n**Status:** silent (empty output)\n"
+        ),
+        "/c/cron/output/jb/2026-10-02_09-00-00.md": _cron_out("probe", "**Mode:** no_agent (script)\n\nok 3 rows\n"),
+        "/c/cron/output/jb/2026-10-03_09-00-00.md": _cron_out(
+            "probe", "**Mode:** no_agent (script)\n**Status:** script failed\n"
+        ),
+        "/c/cron/output/jb/notes.md": b"# not an output file\n",
+    }
+    records = _run(files)
+    calls = _kind(records, ArtifactKind.AI_TOOL_CALL)
+    (call,) = calls
+    assert call.data["call_name"] == "cron_output"
+    assert call.data["file_path"] == "/c/cron/output/ja/2026-10-01_09-00-00.md"
+    assert call.data["content"].endswith("all good\n")
+    assert call.data["input"]["job_name"] == "daily"
+    assert call.data["input"]["prompt_excerpt"] == "summarise news"
+    assert call.data["extra"]["recorded_output"] is True
+    event = _event_for(records, call)
+    assert event.actor == Actor.AI and event.category == EventCategory.AI_ACTIVITY
+    assert event.ts_utc == datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
+    summaries = {
+        a.data["extra"]["job_id"]: a.data["extra"]
+        for a in _kind(records, ArtifactKind.AI_APP_PRESENCE)
+        if a.data.get("extra", {}).get("source_kind") == "cron_output_summary"
+    }
+    assert summaries["ja"]["mode"] == "agent" and summaries["ja"]["job_name"] == "daily"
+    assert (summaries["ja"]["outputs"], summaries["ja"]["agent_outputs"], summaries["ja"]["silent"]) == (2, 1, 1)
+    jb = summaries["jb"]
+    assert jb["mode"] == "script"
+    assert (jb["outputs"], jb["agent_outputs"], jb["script_outputs"], jb["silent"], jb["failed"]) == (3, 0, 2, 1, 1)
+
+
+def test_kanban_completed_results_and_agent_attachments_become_output_records() -> None:
+    schema = KANBAN_SCHEMA + (
+        "CREATE TABLE task_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, "
+        "filename TEXT NOT NULL, stored_path TEXT NOT NULL, size INTEGER, uploaded_by TEXT, created_at INTEGER);"
+    )
+    task = "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)"
+    run = (
+        "INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, summary) "
+        "VALUES (?,?,?,?,?,?,?)"
+    )
+    attach = (
+        "INSERT INTO task_attachments (task_id, filename, stored_path, size, uploaded_by, created_at) "
+        "VALUES (?,?,?,?,?,?)"
+    )
+    blob = _db(
+        schema,
+        [
+            (task, ("t1", "Title one", "do it", "worker", "done", "user", 1790000000, 1790000500, "result text")),
+            (task, ("t2", "Title two", None, None, "todo", "user", 1790000100, None, None)),
+            (task, ("t3", "Title three", "b", "worker", "done", "user", 1790000000, 1790000900, None)),
+            (run, ("t3", "coder", "done", 1790000250, 1790000400, "ok", "older summary")),
+            (run, ("t3", "coder", "done", 1790000500, 1790000800, "ok", "final summary")),
+            (attach, ("t1", "report.md", "/home/u/.hermes/kanban/attachments/t1/report.md", 10, "kanban_complete", 1790000600)),
+            (attach, ("t1", "mine.png", "/home/u/.hermes/kanban/attachments/t1/mine.png", 5, "user", 1790000700)),
+        ],
+    )
+    records = _run({"/case/05/kanban.db": blob})
+    calls = {c.provenance.record_locator: c for c in _kind(records, ArtifactKind.AI_TOOL_CALL)}
+    assert set(calls) == {
+        "row:tasks.id=t1:result",
+        "row:tasks.id=t3:task_runs.summary",
+        "row:task_attachments.id=1",
+    }
+    first = calls["row:tasks.id=t1:result"]
+    assert first.data["call_name"] == "kanban_result" and first.data["content"] == "result text"
+    assert first.data["file_path"] == "/case/05/kanban.db#tasks.id=t1:result"
+    assert first.data["input"]["task_title"] == "Title one"
+    assert _event_for(records, first).ts_utc == datetime.fromtimestamp(1790000500, UTC)
+    assert calls["row:tasks.id=t3:task_runs.summary"].data["content"] == "final summary"
+    attachment = calls["row:task_attachments.id=1"]
+    assert attachment.data["call_name"] == "kanban_attachment" and "content" not in attachment.data
+    assert attachment.data["file_path"] == "/home/u/.hermes/kanban/attachments/t1/report.md"
+    assert not _kind(records, ArtifactKind.PARSE_WARNING)

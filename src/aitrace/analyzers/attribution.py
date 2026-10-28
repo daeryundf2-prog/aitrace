@@ -45,6 +45,13 @@ AI_SCORE_CAP = 0.95
 EXTRA_SIGNAL_BONUS = 0.05
 INEXACT_WRITE_FACTOR = 0.6
 WRITE_CALLS = frozenset({"write", "edit", "multiedit"})
+# AI_TOOL_CALL call_names that are an agent's own record of an output it produced (hermes_export): the
+# recorded content is the output itself, so the path match is exact by construction.
+OUTPUT_CALLS = frozenset({"cron_output", "cron_delivery", "kanban_result", "kanban_attachment"})
+AGENT_RECORD_LIMITATION = (
+    "Based on the agent's own record; whether a person edited the output afterwards cannot be "
+    "established from this material alone."
+)
 # Signal types a media/document plugin may report; anything else is ignored by design.
 _MEDIA_TYPES = frozenset(
     {
@@ -122,6 +129,7 @@ class _Subject:
     path: str
     artifact_ids: set[str] = field(default_factory=set)
     signals: dict[SignalType, _Sig] = field(default_factory=dict)
+    agent_record: bool = False
 
     def add(self, stype: SignalType, weight: float, artifact_ids: Iterable[str], note: str) -> None:
         ids = set(artifact_ids)
@@ -153,6 +161,7 @@ class _ToolWrite:
     ts: datetime | None
     content_sha256: str | None
     content: str | None
+    recorded: bool = False
 
 
 TEXT_SAMPLE_LIMIT = 64 * 1024
@@ -326,7 +335,8 @@ class AttributionAnalyzer:
     ) -> None:
         file_path = data.get("file_path")
         call_name = str(data.get("call_name", "")).casefold()
-        if not file_path or call_name not in WRITE_CALLS:
+        recorded = call_name in OUTPUT_CALLS
+        if not file_path or not (recorded or call_name in WRITE_CALLS):
             return
         content = data.get("content")
         has_content = isinstance(content, str)
@@ -337,6 +347,7 @@ class AttributionAnalyzer:
                 ts=ts_by_artifact.get(art.id),
                 content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest() if has_content else None,
                 content=content if has_content else None,
+                recorded=recorded,
             )
         )
 
@@ -365,6 +376,10 @@ class AttributionAnalyzer:
     def _agent_write_signals(subj: _Subject, calls: list[_ToolWrite], info: _FileInfo | None) -> None:
         cap = SIGNAL_CAPS[SignalType.AGENT_TOOL_WRITE]
         ids = [c.artifact_id for c in calls]
+        if any(c.recorded for c in calls):
+            subj.agent_record = True
+            subj.add(SignalType.AGENT_TOOL_WRITE, cap, ids, "the agent's own record of an output it produced")
+            return
         content_calls = [c for c in calls if c.content_sha256 is not None]
         file_sha = info.sha256 if info else None
         exact = file_sha is not None and any(c.content_sha256 == file_sha for c in content_calls)
@@ -485,7 +500,11 @@ class AttributionAnalyzer:
             band=band_for(confidence),
             signals=signals,
             rationale=rationale,
-            limitations=_limitation_texts(s.type for s in signals),
+            limitations=(
+                (AGENT_RECORD_LIMITATION, *_limitation_texts(s.type for s in signals))
+                if subj.agent_record
+                else _limitation_texts(s.type for s in signals)
+            ),
         )
 
     @staticmethod

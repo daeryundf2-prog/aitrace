@@ -15,8 +15,10 @@ from typing import Any
 from aitrace.report.html import environment
 from aitrace.report.i18n import DEFAULT_LANG, SUPPORTED_LANGS, t
 from aitrace.report.layout import (
+    QUESTION_LOOP_HEADERS,
     machine_label,
     question_clean_rows,
+    question_loop_rows,
     question_month_table,
     question_topic_rows,
     tool_label,
@@ -225,6 +227,11 @@ def render_questions_volume(model: ReportModel, out_path: Path | str) -> Path:
                 t("q.clean_title", lang),
             )
         )
+        loops = question_loop_rows(stats)
+        if loops:
+            fh.write(f"<h2>{escape(t('q.loop_title', lang))}</h2>\n")
+            fh.write(_table([t(key, lang) for key in QUESTION_LOOP_HEADERS], loops, t("q.loop_title", lang)))
+            fh.write(f"<p>{escape(t('q.loop_note', lang))}</p>\n")
         if not model.questions:
             fh.write(f"<p>{escape(t('q.none', lang))}</p>\n</div>\n</body>\n</html>\n")
             return path

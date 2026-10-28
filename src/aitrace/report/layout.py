@@ -935,6 +935,30 @@ def question_clean_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, 
     return rows
 
 
+QUESTION_LOOP_HEADERS = (
+    "q.col_prefix",
+    "q.col_count",
+    "q.col_sessions",
+    "q.col_machine",
+    "q.col_period",
+    "q.col_clock",
+)
+
+
+def question_loop_rows(stats: Mapping[str, Any]) -> list[tuple[str, str, str, str, str, str]]:
+    return [
+        (
+            _text(loop.get("prefix")) + "…",
+            f"{int(loop.get('count') or 0):,}",
+            f"{int(loop.get('sessions') or 0):,}",
+            ", ".join(str(m) for m in loop.get("machines") or ()),
+            " ~ ".join(dict.fromkeys(v for v in (_text(loop.get("first")), _text(loop.get("last"))) if v)),
+            f"{_text(loop.get('common_time'))} ({int(loop.get('at_common_time') or 0)})",
+        )
+        for loop in stats.get("loops") or ()
+    ]
+
+
 def question_month_table(stats: Mapping[str, Any], lang: str) -> tuple[list[str], list[list[str]]]:
     by_month: Mapping[str, Mapping[str, int]] = stats.get("by_month") or {}
     totals: dict[str, int] = {}
@@ -1014,6 +1038,15 @@ def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, 
         (7, 2),
         caption=t("q.clean_title", lang),
     )
+    loops = question_loop_rows(stats)
+    if loops:
+        b.table(
+            tuple(t(key, lang) for key in QUESTION_LOOP_HEADERS),
+            loops,
+            (8, 2, 2, 3, 4, 3),
+            caption=t("q.loop_title", lang),
+        )
+        b.para(t("q.loop_note", lang))
     questions = model.questions
     if not questions:
         b.para(t("q.none", lang))

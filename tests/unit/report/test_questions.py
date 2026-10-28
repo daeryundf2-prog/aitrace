@@ -41,6 +41,16 @@ EXPORT = "/x/04_input/node-1_PC_사용자입력_프롬프트_전수_3건.md"
             ("human", "멈춰도 돼", None, False),
         ),
         (
+            "You've reached the maximum number of tool-calling iterations allowed. Please summarise.",
+            EXPORT,
+            ("system_notice", None, None, False),
+        ),
+        (
+            "Your previous final response was rejected by the output contract validator.",
+            EXPORT,
+            ("system_notice", None, None, False),
+        ),
+        (
             "[System: The active model for this chat has changed to x.]",
             EXPORT,
             ("system_notice", "", None, False),
@@ -143,3 +153,34 @@ def test_build_questions_counts_every_raw_row_and_collapses_duplicates() -> None
     assert stats["duplicates"] == 1
     assert stats["human"] + sum(stats["excluded"].values()) + stats["duplicates"] == stats["raw"]
     assert stats["by_month"] == {"2026-07": {"node-1 PC": 1}, "2026-08": {"node-1 PC": 1}}
+
+
+LOOP_TEXT = "당신은 운영 분석가입니다. 아래 일일 점검 보고서를 읽고 위험을 식별하세요. " * 3
+
+
+def test_same_long_instruction_alone_in_many_sessions_is_an_automated_loop() -> None:
+    rows = [
+        _row(LOOP_TEXT + f"보고서 {i}", f"2026-08-0{i + 1} 06:10:00Z", session=f"cron{i}", aid=f"l{i}")
+        for i in range(5)
+    ]
+    rows.append(_row("오늘 업무 마무리해 줘", "2026-08-06 18:00:00Z", session="me", aid="h"))
+    questions, stats = build_questions(rows, {})
+    assert [q["text"] for q in questions] == ["오늘 업무 마무리해 줘"]
+    assert stats["excluded"]["loop"] == 5
+    (loop,) = stats["loops"]
+    assert (loop["count"], loop["sessions"], loop["common_time"], loop["at_common_time"]) == (
+        5,
+        5,
+        "06:10",
+        5,
+    )
+    assert (loop["first"], loop["last"]) == ("2026-08-01", "2026-08-05")
+    assert stats["human"] + sum(stats["excluded"].values()) + stats["duplicates"] == stats["raw"]
+
+
+def test_same_text_resent_inside_one_session_stays_a_question() -> None:
+    rows = [_row(LOOP_TEXT, f"2026-08-01 10:0{i}:00Z", session="one", aid=f"r{i}") for i in range(6)]
+    questions, stats = build_questions(rows, {})
+    assert len(questions) == 6
+    assert stats["excluded"]["loop"] == 0
+    assert stats["loops"] == []

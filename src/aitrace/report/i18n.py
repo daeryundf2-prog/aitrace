@@ -416,6 +416,28 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "q.ex.a2a": ("제외: 에이전트 간(A2A) 메시지", "Excluded: agent-to-agent (A2A) messages"),
     "q.ex.automated": ("제외: 예약 작업·칸반 자동 지시", "Excluded: scheduled job and kanban prompts"),
     "q.ex.empty": ("제외: 정리 후 내용 없음", "Excluded: empty after cleaning"),
+    "q.ex.loop": (
+        "제외: 자동 반복 실행 지시(루프 추정)",
+        "Excluded: automatically repeated instructions (loops)",
+    ),
+    "q.loop_title": ("자동 반복 실행 지시(루프 추정)", "Automatically Repeated Instructions (Loops)"),
+    "q.loop_note": (
+        (
+            "같은 지시문(100자 이상, 앞 50자 기준)이 서로 다른 세션 5개 이상에서 반복되고 그중 80% 이상이 세션의 유일한 입력인 경우, "
+            "예약 작업이나 일괄 처리 스크립트가 보낸 것으로 보고 사람의 직접 질의에서 제외하였음. 같은 내용을 한 세션 안에서 "
+            "다시 보낸 경우는 사람의 재전송으로 보고 제외하지 않았음."
+        ),
+        (
+            "An instruction of 100+ characters opening identically (first 50 characters) in 5 or more different "
+            "sessions, and the only input of its session in at least 80% of them, is treated as sent by a scheduled "
+            "job or batch script and excluded; a person resending the same text inside one session is kept."
+        ),
+    ),
+    "q.col_prefix": ("지시문 앞부분", "Instruction opening"),
+    "q.col_sessions": ("세션 수", "Sessions"),
+    "q.col_machine": ("머신", "Machine"),
+    "q.col_period": ("기간", "Period"),
+    "q.col_clock": ("가장 잦은 시각(건수)", "Most frequent time (count)"),
     "q.dup": ("같은 시각·같은 내용 중복 기록(한 건으로 합침)", "Duplicate records merged into one"),
     "q.human": ("사람이 직접 입력한 질의", "Questions typed by a person"),
     "q.attachments": ("그중 파일·이미지 첨부가 있는 질의", "Of which with an attached file or image"),

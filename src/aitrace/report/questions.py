@@ -17,7 +17,14 @@ from typing import Any
 from aitrace.core import catalog
 
 HUMAN = "human"
-EXCLUDED_KINDS: tuple[str, ...] = ("compaction", "system_notice", "a2a", "automated", "empty")
+EXCLUDED_KINDS: tuple[str, ...] = ("compaction", "system_notice", "a2a", "automated", "loop", "empty")
+# A scheduled job or batch script sends the same long instruction once per fresh session; a person who resends
+# a message does so inside one session. Text this long, opening identically in this many different sessions,
+# and alone in its session this often, is counted as an automated loop rather than a typed question.
+LOOP_MIN_CHARS = 100
+LOOP_PREFIX_CHARS = 50
+LOOP_MIN_SESSIONS = 5
+LOOP_MIN_SOLO_SHARE = 0.8
 
 _GATEWAY = re.compile(
     r"(?:Gateway message origin \(JSON data[^)]*\):\s*)?(\{[^{}]*\})?\s*"
@@ -32,6 +39,11 @@ _COMPACTION = re.compile(
 _AGENT_REPORT = re.compile(
     r"^\s*\[(?:ASYNC DELEGATION|IMPORTANT:|System note:|Continuing toward your standing goal"
     r"|Your active task list was preserved)"
+)
+_FRAMEWORK_NOTICE = re.compile(
+    r"^\s*(?:You've reached the maximum number of tool-calling iterations"
+    r"|Your previous final response was rejected by the output contract validator"
+    r"|You just executed tool calls but returned an empty response)"
 )
 _GATEWAY_GENERATED = re.compile(r"\[INTERNAL NOTIFICATION [^\]]*not written by a human user")
 _SKILL_INVOKED = re.compile(
@@ -82,7 +94,7 @@ def normalise(text: str, source: str = "") -> tuple[str, str, str | None, bool]:
     skill = _SKILL_INVOKED.match(body)
     if skill is not None:
         return HUMAN, f"(스킬 실행 요청: {skill.group('skill')})", platform, False
-    if _AGENT_REPORT.match(body) or _GATEWAY_GENERATED.search(body):
+    if _AGENT_REPORT.match(body) or _GATEWAY_GENERATED.search(body) or _FRAMEWORK_NOTICE.match(body):
         return "system_notice", body, platform, False
     attachment = False
     documents = [m.group("name") for m in _DOCUMENT.finditer(body)]
@@ -157,21 +169,55 @@ def build_questions(
             "artifact_id": row.get("artifact_id"),
             "duplicates": 0,
         }
-    questions = sorted(
-        kept.values(), key=lambda q: (q["ts_utc"] is None, str(q["ts_utc"] or ""), q["machine"])
-    )
+    duplicates = sum(q["duplicates"] for q in kept.values())
+    questions, loops = _split_loops(list(kept.values()))
+    excluded["loop"] = sum(int(loop["count"]) for loop in loops)
+    questions.sort(key=lambda q: (q["ts_utc"] is None, str(q["ts_utc"] or ""), q["machine"]))
     for number, question in enumerate(questions, start=1):
         question["no"] = number
     stats = {
         "raw": raw,
         "excluded": {kind: excluded.get(kind, 0) for kind in EXCLUDED_KINDS},
-        "duplicates": sum(q["duplicates"] for q in questions),
+        "duplicates": duplicates,
+        "loops": loops,
         "human": len(questions),
         "attachments": sum(1 for q in questions if q["attachment"]),
         "by_month": _by_month(questions),
         "topics": dict(Counter(topic for q in questions for topic in q["topics"]).most_common()),
     }
     return questions, stats
+
+
+def _split_loops(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    per_session = Counter((q["machine"], q["session"]) for q in rows)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for q in rows:
+        if len(q["text"]) >= LOOP_MIN_CHARS:
+            groups.setdefault(q["text"][:LOOP_PREFIX_CHARS], []).append(q)
+    looped: set[int] = set()
+    loops: list[dict[str, Any]] = []
+    for prefix, members in groups.items():
+        sessions = {(q["machine"], q["session"]) for q in members}
+        solo = sum(1 for q in members if per_session[(q["machine"], q["session"])] == 1) / len(members)
+        if len(sessions) < LOOP_MIN_SESSIONS or solo < LOOP_MIN_SOLO_SHARE:
+            continue
+        looped.update(id(q) for q in members)
+        dates = sorted(str(q["date"]) for q in members if q["date"])
+        clock, at_clock = Counter(str(q["ts_local"] or "")[11:16] for q in members).most_common(1)[0]
+        loops.append(
+            {
+                "prefix": prefix,
+                "count": len(members),
+                "sessions": len(sessions),
+                "machines": sorted({str(q["machine"]) for q in members}),
+                "first": dates[0] if dates else "",
+                "last": dates[-1] if dates else "",
+                "common_time": clock,
+                "at_common_time": at_clock,
+            }
+        )
+    loops.sort(key=lambda loop: (-int(loop["count"]), str(loop["prefix"])))
+    return [q for q in rows if id(q) not in looped], loops
 
 
 def _by_month(questions: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:

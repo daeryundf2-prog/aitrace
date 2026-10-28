@@ -28,5 +28,12 @@
   },
   "credentials_providers": [
     "OpenAI"
+  ],
+  "download_origins": [
+    "files.oaiusercontent.com/file-xyz",
+    "logo-copy.png"
+  ],
+  "cache_images": [
+    "files.oaiusercontent.com/file-cached"
   ]
 }

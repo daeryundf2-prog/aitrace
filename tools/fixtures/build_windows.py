@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sqlite3
 import struct
@@ -31,6 +32,21 @@ DELETED_REL = "Users/kim/Documents/secret_plan.txt"
 DEFAULT_TIME = datetime(2026, 9, 30, 0, 0, 0, tzinfo=UTC)
 SESSION_ID = "1111aaaa-0000-0000-0000-000000000001"
 PNG_NAME = "DALL·E 2026-10-01 00.35.00 - a red logo.png"
+COPY_REL = "Users/kim/Pictures/logo-copy.png"
+CACHE_REL = (
+    "Users/kim/AppData/Local/Google/Chrome/User Data/Default/Cache/Cache_Data/0123456789abcdef_0"
+)
+CACHE_URL = "https://files.oaiusercontent.com/file-cached"
+ZONE_STREAMS: dict[str, str] = {
+    f"Users/kim/Downloads/{PNG_NAME}": (
+        "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://chatgpt.com/c/abc\r\n"
+        "HostUrl=https://files.oaiusercontent.com/file-xyz\r\n"
+    ),
+    COPY_REL: (
+        "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://chatgpt.com/\r\n"
+        "HostUrl=https://files.oaiusercontent.com/file-copy\r\n"
+    ),
+}
 
 PROPOSAL = "# 제안서 요약\n\n본 문서는 경쟁사 제안서의 핵심 조건을 정리한 것이다. 가격 조건, 납기, 보증 범위를 비교하였다.\n"
 MINUTES = "# 회의록\n\n1. 일정 확정\n2. 예산 검토\n3. 담당자 배정\n"
@@ -59,6 +75,8 @@ EXPECTED_JSON: dict[str, object] = {
         "/Users/kim/Downloads/DALL·E 2026-10-01 00.35.00 - a red logo.png": "ai_generated",
     },
     "credentials_providers": ["OpenAI"],
+    "download_origins": ["files.oaiusercontent.com/file-xyz", "logo-copy.png"],
+    "cache_images": ["files.oaiusercontent.com/file-cached"],
 }
 
 MTIMES: dict[str, datetime] = {
@@ -193,18 +211,32 @@ def _chrome_history(path: Path) -> None:
         conn.close()
 
 
-def _png() -> bytes:
+def _simple_cache_entry(url: str, body: bytes) -> bytes:
+    header_magic, eof_magic = 0xFCFB6D1BA7725C30, 0xF4FA6F45970D41D8
+    key = url.encode()
+    headers = b"HTTP/1.1 200 OK\x00content-type: image/png\x00\x00"
+    return (
+        struct.pack("<QIIII", header_magic, 5, len(key), 0, 0)
+        + key
+        + body
+        + struct.pack("<QIIII", eof_magic, 0, zlib.crc32(body) & 0xFFFFFFFF, len(body), 0)
+        + headers
+        + struct.pack("<QIIII", eof_magic, 0, 0, len(headers), 0)
+    )
+
+
+def _png(c2pa_marker: bool = True, rgb: bytes = b"\xd0\x20\x20") -> bytes:
     def chunk(tag: bytes, data: bytes) -> bytes:
         body = tag + data
         return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
     ihdr = struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)
-    raw = b"".join(b"\x00" + b"\xd0\x20\x20" * 8 for _ in range(8))
+    raw = b"".join(b"\x00" + rgb * 8 for _ in range(8))
     c2pa = b"c2pa" + b'{"claim_generator":"ChatGPT","digitalSourceType":"trainedAlgorithmicMedia"}'
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", ihdr)
-        + chunk(b"caBX", c2pa)
+        + (chunk(b"caBX", c2pa) if c2pa_marker else b"")
         + chunk(b"IDAT", zlib.compress(raw))
         + chunk(b"IEND", b"")
     )
@@ -233,6 +265,11 @@ def build_stage(stage: Path) -> None:
     _chrome_history(kim / "AppData" / "Local" / "Google" / "Chrome" / "User Data" / "Default" / "History")
     (kim / "Downloads").mkdir(parents=True, exist_ok=True)
     (kim / "Downloads" / PNG_NAME).write_bytes(_png())
+    (kim / "Pictures").mkdir(parents=True, exist_ok=True)
+    (kim / "Pictures" / "logo-copy.png").write_bytes(_png(c2pa_marker=False, rgb=b"\x20\x40\xd0"))
+    cache = stage / CACHE_REL
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(_simple_cache_entry(CACHE_URL, _png(c2pa_marker=False, rgb=b"\x20\xd0\x40")))
     _write_text(
         kim / "AppData" / "Roaming" / "Microsoft" / "Windows" / "PowerShell" / "PSReadLine"
         / "ConsoleHost_history.txt",
@@ -290,11 +327,16 @@ def build() -> Path:
     with tempfile.TemporaryDirectory(prefix="aitrace-win-") as tmp:
         parent = Path(tmp)
         build_stage(parent / "stage")
+        (parent / "ads").mkdir()
+        ads_cmds = ""
+        for i, (rel, text) in enumerate(ZONE_STREAMS.items()):
+            (parent / "ads" / str(i)).write_bytes(text.encode())
+            ads_cmds += f"cp /w/ads/{i} {shlex.quote('/mnt/n/' + rel + ':Zone.Identifier')} && "
         script = (
             "apt-get -qq update && apt-get -qq install -y ntfs-3g >/dev/null && "
             "truncate -s 48M /w/windows.raw && mkntfs -q -F -f -L WINFIX /w/windows.raw && "
-            "mkdir /mnt/n && ntfs-3g /w/windows.raw /mnt/n && cp -a /w/stage/. /mnt/n/ && "
-            f"rm /mnt/n/{DELETED_REL} && umount /mnt/n"
+            "mkdir /mnt/n && ntfs-3g -o streams_interface=windows /w/windows.raw /mnt/n && cp -a /w/stage/. /mnt/n/ && "
+            f"{ads_cmds}rm /mnt/n/{DELETED_REL} && umount /mnt/n"
         )
         _run(["docker", "run", "--rm", "--privileged", "-v", f"{parent}:/w", "debian:bookworm-slim",
               "bash", "-c", script])

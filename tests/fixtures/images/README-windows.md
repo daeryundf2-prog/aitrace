@@ -12,10 +12,10 @@ Rebuild (needs docker with a running daemon, and `ewfacquire`; exits 2 with a me
 The builder stages the tree, then runs:
 
 ```
-docker run --rm --privileged -v <stage_parent>:/w debian:bookworm-slim bash -c "apt-get -qq update && apt-get -qq install -y ntfs-3g >/dev/null && truncate -s 48M /w/windows.raw && mkntfs -q -F -f -L WINFIX /w/windows.raw && mkdir /mnt/n && ntfs-3g /w/windows.raw /mnt/n && cp -a /w/stage/. /mnt/n/ && rm /mnt/n/Users/kim/Documents/secret_plan.txt && umount /mnt/n"
+docker run --rm --privileged -v <stage_parent>:/w debian:bookworm-slim bash -c "apt-get -qq update && apt-get -qq install -y ntfs-3g >/dev/null && truncate -s 48M /w/windows.raw && mkntfs -q -F -f -L WINFIX /w/windows.raw && mkdir /mnt/n && ntfs-3g -o streams_interface=windows /w/windows.raw /mnt/n && cp -a /w/stage/. /mnt/n/ && cp /w/ads/0 "/mnt/n/Users/kim/Downloads/<DALL·E png>:Zone.Identifier" && cp /w/ads/1 /mnt/n/Users/kim/Pictures/logo-copy.png:Zone.Identifier && rm /mnt/n/Users/kim/Documents/secret_plan.txt && umount /mnt/n"
 ewfacquire -u -t tests/fixtures/images/windows -f encase6 -c deflate:fast -C AITRACE-WIN -D "aitrace windows fixture" -E WIN-001 -e aitrace -N fixture -d sha256 -q windows.raw
 ```
 
-sha256 of `windows.E01`: `0e4842d655f58fa29143933b22d79d70ee5a8ff1fa874a8643d094abcb902272`
+sha256 of `windows.E01`: `7301cd13b556bec9ed75e6f14c9fc88878950f0ed831951409d4fbe979abc479`
 
 The E01 embeds the acquisition time, so a rebuild changes this hash; the planted-file set stays identical.

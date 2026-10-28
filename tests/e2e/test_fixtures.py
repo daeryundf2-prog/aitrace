@@ -159,6 +159,26 @@ def fact_failures(report: Mapping[str, Any], expected: Mapping[str, Any]) -> lis
         if provider.lower() not in credential_text:
             failures.append(f"credential provider not found in ai_tools rows: {provider!r}")
 
+    report_text = json.dumps(report, ensure_ascii=False)
+    for needle in expected.get("download_origins", []):
+        if needle not in report_text:
+            failures.append(f"download origin not found in report.json: {needle!r}")
+    for needle in expected.get("cache_images", []):
+        if needle not in report_text:
+            failures.append(f"cache image not found in report.json: {needle!r}")
+    for needle in expected.get("download_origins", []):
+        if not needle.endswith(".png"):
+            continue
+        rows = [a for a in report["attribution"] if needle in str(a["subject"])]
+        if not rows:
+            failures.append(f"no attribution row for {needle!r}")
+            continue
+        row = rows[0]
+        if row["verdict"] == "human":
+            failures.append(f"attribution verdict for {needle!r} is human")
+        if not any(s.get("type") == "ai_download_origin" for s in row["signals"]):
+            failures.append(f"{needle!r} lacks an ai_download_origin signal")
+
     return failures
 
 

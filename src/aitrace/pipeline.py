@@ -24,10 +24,11 @@ from aitrace.fs.base import EvidenceFS
 from aitrace.fs.open import UnsupportedEvidence, ewf_segments, open_evidence
 from aitrace.plugins.registry import load_plugins
 from aitrace.plugins.runner import run_plugins
-from aitrace.report.docx import render_docx
+from aitrace.report.brief import build_brief_document
+from aitrace.report.docx import render_document_docx, render_docx
 from aitrace.report.html import render_html
 from aitrace.report.model import ReportModel, build_report_model
-from aitrace.report.pdf import render_pdf
+from aitrace.report.pdf import render_document_pdf, render_pdf
 from aitrace.report.tabular import write_csvs, write_json
 from aitrace.report.volume import render_prompts_volume, render_questions_volume
 
@@ -291,7 +292,12 @@ def render_reports(
                 render_questions_volume(model, report_dir / "questions.html"),
             ]
         ),
-        "pdf": lambda: written.append(render_pdf(model, report_dir / "report.pdf")),
+        "pdf": lambda: written.extend(
+            [
+                render_pdf(model, report_dir / "report.pdf"),
+                render_document_pdf(build_brief_document(model), report_dir / "brief.pdf"),
+            ]
+        ),
         "docx": lambda: _render_docx(model, report_dir / "report.docx", written),
         "json": lambda: written.append(write_json(model, report_dir / "report.json")),
         "csv": lambda: written.extend(write_csvs(model, report_dir / "csv")),
@@ -311,6 +317,9 @@ def render_reports(
 def _render_docx(model: ReportModel, path: Path, written: list[Path]) -> None:
     render_docx(model, path)
     written.append(path)
+    brief = path.with_name("brief.docx")
+    render_document_docx(build_brief_document(model), brief, author=str(model.case.get("examiner") or ""))
+    written.append(brief)
 
 
 def section_counts(model: ReportModel) -> dict[str, int]:

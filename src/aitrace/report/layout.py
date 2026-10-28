@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
-from aitrace.report.i18n import STRINGS, t
+from aitrace.report.i18n import t
 from aitrace.report.model import (
     ATTRIBUTIONS_CSV_PATH,
     COLUMNS,
@@ -72,6 +72,7 @@ class Heading:
 @dataclass(frozen=True, slots=True)
 class Para:
     text: str
+    note: bool = False  # set-off remark (caveat, legal reference); plain renderers print it as a paragraph
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,7 @@ class Table:
     caption: str = ""
     label_first: bool = False  # key/value table whose first column labels the row
     compact: bool = False  # long table: renderers may use smaller type
+    figures: bool = False  # one row of headline numbers under their labels; plain renderers draw a table
 
 
 Block = Heading | Para | Table
@@ -96,6 +98,7 @@ class Document:
     cover: list[tuple[str, str]]
     notice: str
     blocks: list[Block] = field(default_factory=list)
+    theme: str = "plain"
 
     def toc(self) -> list[Heading]:
         return [b for b in self.blocks if isinstance(b, Heading) and b.toc and b.level <= 2]
@@ -180,8 +183,18 @@ class _Builder:
         self._subsub += 1
         self.blocks.append(Heading(4, f"{self._subsub})", title, self._anchor(), toc=False))
 
-    def para(self, text: str) -> None:
-        self.blocks.append(Para(text))
+    def para(self, text: str, *, note: bool = False) -> None:
+        self.blocks.append(Para(text, note))
+
+    def figures(self, items: Sequence[tuple[str, str]]) -> None:
+        self.blocks.append(
+            Table(
+                tuple(label for label, _ in items),
+                (tuple(value for _, value in items),),
+                tuple(1 for _ in items),
+                figures=True,
+            )
+        )
 
     def table(
         self,
@@ -253,6 +266,10 @@ def _cover(model: ReportModel, lang: str) -> list[tuple[str, str]]:
         (t("cover.author", lang), str(case.get("examiner") or "")),
         (t("cover.date", lang), _cover_date(model, lang)),
     ]
+
+
+Builder = _Builder
+cover_rows = _cover
 
 
 def _users(ev: Mapping[str, Any]) -> str:
@@ -936,8 +953,7 @@ def question_clean_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, 
 
 
 def _channel_label(channel: str, lang: str) -> str:
-    key = f"q.ch.{channel or '-'}"
-    return t(key, lang) if key in STRINGS else channel
+    return _lookup(f"q.ch.{channel or '-'}", lang, channel)
 
 
 def question_channel_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, str, str]]:

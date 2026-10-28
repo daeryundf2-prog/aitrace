@@ -228,12 +228,17 @@ def _toc(doc: DocumentObject, model_doc: Document, title: str) -> None:
 
 
 def render_docx(model: ReportModel, out_path: Path | str) -> None:
-    model_doc = build_document(model, TIMELINE_LIMIT_PDF_DOCX)
+    render_document_docx(
+        build_document(model, TIMELINE_LIMIT_PDF_DOCX), out_path, author=str(model.case.get("examiner") or "")
+    )
+
+
+def render_document_docx(model_doc: Document, out_path: Path | str, *, author: str = "") -> None:
     doc = new_document()
     _apply_styles(doc)
     _declare_fallback_fonts(doc)
     doc.core_properties.title = model_doc.title
-    doc.core_properties.author = str(model.case.get("examiner") or "")
+    doc.core_properties.author = author
     _page_setup(doc, model_doc.header_text)
     _cover(doc, model_doc)
     _toc(doc, model_doc, t("toc.title", model_doc.lang))

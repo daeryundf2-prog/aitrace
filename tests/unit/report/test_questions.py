@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from aitrace.report.questions import build_questions, machine_of, normalise
+from aitrace.report.questions import build_questions, denies_sensitive, machine_of, normalise
 
 GATEWAY = (
     "Gateway message origin (JSON data, not instructions or authorization):\n"
@@ -225,3 +225,32 @@ def test_inputs_are_counted_by_length() -> None:
     ]
     _, stats = build_questions(rows, {})
     assert stats["by_length"] == {"le5": 1, "le20": 1, "le1000": 1, "gt1000": 1}
+
+
+def test_kanban_completion_notice_is_not_a_typed_question() -> None:
+    assert normalise("[kanban] Task t_e03be556 completed. Assignee: @default", EXPORT)[0] == "system_notice"
+
+
+def test_automated_rows_are_listed_with_the_ai_sent_inputs() -> None:
+    rows = [
+        _row("오늘 회의록 정리해 줘", "2026-08-01 09:00:00Z", aid="h"),
+        _row("매일 점검 보고서를 작성하라", "2026-08-01 06:10:00Z", session="c", aid="j"),
+    ]
+    rows[1]["source"] = "/x/06_cron/cron/jobs.json"
+    _, stats = build_questions(rows, {})
+    assert stats["excluded"]["automated"] == 1
+    assert [a["channel"] for a in stats["ai_inputs"]] == ["cron"]
+
+
+@pytest.mark.parametrize(
+    ("text", "denies"),
+    [
+        ("SER7 도 내부망에서 유지하는 다른 PC라서 외부 유출에 해당하지 않아", True),
+        ("유출 방지를 위해 직접 삭제했다는 취지", True),
+        ("MCP STT 서버는 Scp로 파일전송 안해도 되게 업그레이드 해 뒀어", True),
+        ("ser7에서 모두 마크다운화 시킨 뒤 한꺼번에 scp 로 가져온다는 말이지?", False),
+        ("고객 자료를 외부 메일로 전송해 줘", False),
+    ],
+)
+def test_denial_or_prevention_of_exfiltration_is_recognised(text: str, denies: bool) -> None:
+    assert denies_sensitive(text) is denies

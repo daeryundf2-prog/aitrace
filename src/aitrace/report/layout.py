@@ -675,7 +675,7 @@ def _counts_section(b: _Builder, model: ReportModel) -> None:
                 str(g.user),
                 str(g.ai),
                 str(g.calls),
-                ", ".join(g.channels) or "-",
+                "\n".join(g.channels) or "-",
             )
         )
     b.table(

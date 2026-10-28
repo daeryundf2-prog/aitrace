@@ -290,3 +290,24 @@ def test_dense_instruction_table_repeats_tool_and_path_on_every_row() -> None:
     assert paths.count("/03/system_prompts.md") == 120
     assert not any("\u3003" in cell for row in table.rows for cell in row)
     assert not any("\u3003" in p for p in _paragraphs(blocks))
+
+
+def test_opinion_does_not_say_records_exist_when_there_are_none() -> None:
+    model = sample.make_model("ko")
+    model.file_lifecycle = []
+    model.exfil = []
+    blocks = _chapter_blocks(build_document(model), "감정(분석) 의견")
+    text = " ".join(b.text for b in blocks if isinstance(b, Para))
+    assert "확인되지 않음" in text and "기록이 존재한다는 사실만으로" not in text
+
+
+def _chapter_blocks(doc: Document, title: str) -> list[Block]:
+    start = next(
+        i for i, b in enumerate(doc.blocks) if isinstance(b, Heading) and b.level == 1 and b.text == title
+    )
+    out: list[Block] = []
+    for block in doc.blocks[start + 1 :]:
+        if isinstance(block, Heading) and block.level == 1:
+            break
+        out.append(block)
+    return out

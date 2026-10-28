@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 
-from aitrace.report.pdf import render_pdf
+from aitrace.report.layout import Document, Heading, Para
+from aitrace.report.pdf import render_document_pdf, render_pdf
 
 _SPEC = importlib.util.spec_from_file_location("report_sample", Path(__file__).with_name("sample.py"))
 assert _SPEC is not None and _SPEC.loader is not None
@@ -83,3 +84,14 @@ def test_english_pdf_renders(tmp_path: Path) -> None:
     _, texts, _ = _render(tmp_path, lang="en")
     assert "Chapter 1" in "\n".join(texts)
     assert "Document No. T-1-01 | Confidential" in texts[2]
+
+
+def test_short_chapters_share_a_page_instead_of_each_taking_one(tmp_path: Path) -> None:
+    blocks = []
+    for n in range(1, 4):
+        blocks += [Heading(1, f"제{n}장", f"짧은 장 {n}", f"h{n}"), Para("해당 발견 사항 없음.")]
+    doc = Document(
+        lang="ko", title="시험", header_text="시험", cover=[("사건번호", "X")], notice="", blocks=blocks
+    )
+    pdf = pdfium.PdfDocument(render_document_pdf(doc, tmp_path / "short.pdf"))
+    assert len(pdf) == 3

@@ -13,8 +13,8 @@ from aitrace.report.html import render_html_string
 from aitrace.report.layout import Block, Document, Heading, Para, Table, build_document
 from aitrace.report.model import (
     EXCERPT_CHARS,
-    EXCERPT_DENSE_CHARS,
-    PROMPT_ROW_CAP,
+    QUESTION_EXCERPT_CAP,
+    QUESTION_EXCERPT_CHARS,
     TIMELINE_CHAT_DAY_THRESHOLD,
     TIMELINE_ROW_CAP,
     TOOL_CALL_ROW_CAP,
@@ -70,7 +70,9 @@ def _big_model(lang: str = "ko") -> ReportModel:
     for i in range(N_CALLS):
         call = sample._query(lang, "Hermes", f"s{i % SESSIONS:03d}", "assistant", _clock(i), f"call {i}")
         name = "Write" if i % 3 == 0 else "Read"
-        call.update(role="tool_call", role_label="tool", call_name=name, artifact_id=f"c{i}", text=f"{name} file {i}")
+        call.update(
+            role="tool_call", role_label="tool", call_name=name, artifact_id=f"c{i}", text=f"{name} file {i}"
+        )
         call["ts_utc"] = f"2026-03-01T{_clock(i)}Z"
         calls.append(call)
     instructions = []
@@ -105,7 +107,9 @@ def _big_model(lang: str = "ko") -> ReportModel:
 
 
 def _section(doc: Document, level: int, title: str) -> list[Block]:
-    start = next(i for i, b in enumerate(doc.blocks) if isinstance(b, Heading) and b.level == level and b.text == title)
+    start = next(
+        i for i, b in enumerate(doc.blocks) if isinstance(b, Heading) and b.level == level and b.text == title
+    )
     out: list[Block] = []
     for block in doc.blocks[start + 1 :]:
         if isinstance(block, Heading) and block.level <= level:
@@ -123,19 +127,16 @@ def big() -> ReportModel:
     return _big_model()
 
 
-def test_user_excerpts_are_capped_and_keep_flagged_and_session_edges(big: ReportModel) -> None:
-    blocks = _section(build_document(big), 2, "사용자 입력 발췌")
-    rows = _rows(blocks)
-    assert len(rows) <= PROMPT_ROW_CAP
-    assert all(len(row[3]) <= EXCERPT_DENSE_CHARS + 1 for row in rows)
-    shown = "\n".join(row[3] for row in rows)
+def test_question_excerpts_are_capped_and_keep_flagged_questions(big: ReportModel) -> None:
+    blocks = _section(build_document(big), 2, "사용자 직접 질의")
+    rows = [row for b in blocks if isinstance(b, Table) and b.headers[-1] == "질의" for row in b.rows]
+    assert len(rows) <= QUESTION_EXCERPT_CAP
+    assert all(len(row[2]) <= QUESTION_EXCERPT_CHARS + 1 for row in rows)
+    shown = "\n".join(row[2] for row in rows)
     for i in range(0, N_USER, FLAG_EVERY):
         assert f"synthetic prompt {i} " in shown
-    for s in range(SESSIONS):
-        assert f"synthetic prompt {s} " in shown
-        assert f"synthetic prompt {N_USER - SESSIONS + s} " in shown
     note = next(b.text for b in blocks if isinstance(b, Para))
-    assert str(PROMPT_ROW_CAP) in note and "report/prompts.html" in note and "ai_queries.csv" in note
+    assert f"{N_USER:,}" in note and "report/questions.html" in note and "questions.csv" in note
 
 
 def test_counts_table_has_one_row_per_session(big: ReportModel) -> None:
@@ -183,7 +184,9 @@ def test_report_json_keeps_complete_data_and_main_html_stays_small(big: ReportMo
 
 def test_prompts_volume_has_every_message_escaped_with_toc(big: ReportModel, tmp_path: Path) -> None:
     text = render_prompts_volume(big, tmp_path / "prompts.html").read_text(encoding="utf-8")
-    assert text.count('<div class="entry">') == N_USER + N_USER // 2 + N_INSTRUCTIONS + len(big.generated_files)
+    assert text.count('<div class="entry">') == N_USER + N_USER // 2 + N_INSTRUCTIONS + len(
+        big.generated_files
+    )
     assert "<script" not in text
     assert 'href="#generated"' in text and 'id="generated"' in text
     assert "&lt;script&gt;rule 0" in text

@@ -25,6 +25,7 @@ from aitrace.core.model import Artifact, Attribution, Case, Evidence, Finding, f
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.db.store import CaseStore
 from aitrace.report.i18n import DEFAULT_LANG, LIMITATION_ALIASES, STANDARDS, STRINGS, t
+from aitrace.report.questions import build_questions
 from aitrace.report.timeline import (
     Focus,
     collapsed_row,
@@ -55,7 +56,15 @@ SECTION_KEYS: tuple[str, ...] = (
 )
 
 # Display-only sections added for the chapter layout; they follow SECTION_KEYS in report.json.
-EXTRA_KEYS: tuple[str, ...] = ("tool_calls", "instructions", "generated_files", "generated_jobs", "chapters")
+EXTRA_KEYS: tuple[str, ...] = (
+    "tool_calls",
+    "instructions",
+    "generated_files",
+    "generated_jobs",
+    "questions",
+    "question_stats",
+    "chapters",
+)
 
 TIMELINE_COLUMNS: tuple[str, ...] = (
     "ts_utc",
@@ -113,7 +122,9 @@ TIMELINE_CHAT_DAY_THRESHOLD = 10  # a day with more relevant AI chat events coll
 PROMPT_ROW_CAP = 200  # user-input excerpt rows in chapter 3
 EXCERPT_CHARS = 600  # longest excerpt of any prompt or instruction in the main report
 TOOL_CALL_ROW_CAP = 100  # tool-call rows (file write/delete, transfer/remote commands) in chapter 3
-EXCERPT_DENSE_ROWS = 100  # above this many excerpt rows each excerpt is cut shorter so the PDF stays within its page budget
+EXCERPT_DENSE_ROWS = (
+    100  # above this many excerpt rows each excerpt is cut shorter so the PDF stays within its page budget
+)
 EXCERPT_DENSE_CHARS = 100
 TIMELINE_COMPACT_ROWS = 200  # a timeline longer than this renders compact: shorter cells, smaller PDF type
 TIMELINE_SUMMARY_CHARS = 60  # one table line for most rows
@@ -121,8 +132,13 @@ TIMELINE_SOURCE_CHARS = 20
 SHA_PREFIX_CHARS = 12
 SESSION_ROW_CAP = 60  # busiest session rows in the chapter 3 count table
 MACHINE_ROW_CAP = 60  # busiest machine / source-file rows in the machine totals; the rest roll into one row
-SENSITIVE_TASKS: tuple[str, ...] = ("TASK-SECURITY", "TASK-EXFIL")  # query category flags that always get a row
-GENERATED_ROW_CAP = 150  # chapter 4 judged-item rows (most recent); the full list is in the prompts volume and CSV
+SENSITIVE_TASKS: tuple[str, ...] = (
+    "TASK-SECURITY",
+    "TASK-EXFIL",
+)  # query category flags that always get a row
+GENERATED_ROW_CAP = (
+    150  # chapter 4 judged-item rows (most recent); the full list is in the prompts volume and CSV
+)
 GENERATED_KV_ROWS = 20  # up to this many judged items render as one detail block each, above it as one table
 # Hermes instruction kinds listed row by row in chapter 3; every other kind (skills, workspace instructions,
 # templates, config backups) is summarised by count there, with the full text kept in the prompts volume.
@@ -131,6 +147,13 @@ ATTRIBUTIONS_CSV_PATH = "report/csv/attributions.csv"
 TIMELINE_CSV_PATH = "report/csv/timeline.csv"
 PROMPTS_VOLUME_PATH = "report/prompts.html"
 AI_QUERIES_CSV_PATH = "report/csv/ai_queries.csv"
+QUESTIONS_VOLUME_PATH = "report/questions.html"
+QUESTIONS_CSV_PATH = "report/csv/questions.csv"
+QUESTION_EXCERPT_CAP = (
+    120  # chapter 3 question rows: flagged ones first, then the first question of each date
+)
+QUESTION_FLAGGED_CAP = 50
+QUESTION_EXCERPT_CHARS = 300
 REPORT_JSON_PATH = "report/report.json"
 TOP_FINDINGS = 3
 SIGNAL_SUMMARY_LIMIT = 4
@@ -144,7 +167,11 @@ _LINKED_FINDING_CATEGORIES = (
     FindingCategory.FILE_LIFECYCLE,
     FindingCategory.EXFIL_CHANNEL,
 )
-_DISPLAY_LINK_CATEGORIES = (FindingCategory.AI_TOOL_USAGE, FindingCategory.AI_QUERY, FindingCategory.EXFIL_CHANNEL)
+_DISPLAY_LINK_CATEGORIES = (
+    FindingCategory.AI_TOOL_USAGE,
+    FindingCategory.AI_QUERY,
+    FindingCategory.EXFIL_CHANNEL,
+)
 _INVENTORY_KINDS = frozenset({ArtifactKind.FILE_RECORD, ArtifactKind.FILE_JOURNAL})
 _DELETED_STEPS = frozenset({"deleted", "recycled"})
 _ROLE_ACTOR = {"user": Actor.HUMAN, "assistant": Actor.AI, "system": Actor.SYSTEM, "tool": Actor.SYSTEM}
@@ -191,6 +218,8 @@ class ReportModel:
     generated_files: list[dict[str, Any]] = field(default_factory=list)
     # Per cron job output counts (every job, agent and script mode) behind chapter 4's summary table.
     generated_jobs: list[dict[str, Any]] = field(default_factory=list)
+    questions: list[dict[str, Any]] = field(default_factory=list, init=False)
+    question_stats: dict[str, Any] = field(default_factory=dict, init=False)
     timeline_relevant: tuple[bool, ...] = field(default=(), repr=False, compare=False)
     timeline_text: tuple[str, ...] = field(default=(), repr=False, compare=False)
     lifecycle_hidden: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
@@ -201,6 +230,9 @@ class ReportModel:
         default=(), repr=False, compare=False
     )
     doc_cache: dict[int, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self.questions, self.question_stats = build_questions(self.ai_queries, self.query_meta)
 
     def to_dict(self) -> dict[str, Any]:
         from aitrace.report.layout import chapter_outline
@@ -275,7 +307,14 @@ class ReportModel:
             tool, session, kind = info
             slot = sessions.get((tool, session))
             if slot is None:
-                slot = sessions[(tool, session)] = {"first": i, "row": row, "u": 0, "a": 0, "c": 0, "times": []}
+                slot = sessions[(tool, session)] = {
+                    "first": i,
+                    "row": row,
+                    "u": 0,
+                    "a": 0,
+                    "c": 0,
+                    "times": [],
+                }
             slot[kind] += 1
             if row["time_only"]:
                 slot["times"].append(row["time_only"])
@@ -540,7 +579,9 @@ def _evidence_section(evidences: Sequence[Evidence], lang: str) -> list[dict[str
     rows: list[dict[str, Any]] = []
     for ev in sorted(evidences, key=lambda e: e.id):
         row = ev.to_dict()
-        row["verification_label"] = _label(f"verification.{ev.verification_status}", lang, ev.verification_status)
+        row["verification_label"] = _label(
+            f"verification.{ev.verification_status}", lang, ev.verification_status
+        )
         row["limitations_display"] = _localize_limits(ev.limitations, lang)
         rows.append(row)
     return rows
@@ -588,7 +629,9 @@ def _lifecycle_row(finding: Finding, tz: str, lang: str) -> dict[str, Any]:
         f"{_enum_label('link', link.get('kind'), lang)} ({float(link.get('confidence') or 0):.2f})"
         for link in finding.data.get("links") or []
     ]
-    row["display_title"] = _finding_title(finding, lang) if not path else t("title.file_lifecycle", lang, path=path)
+    row["display_title"] = (
+        _finding_title(finding, lang) if not path else t("title.file_lifecycle", lang, path=path)
+    )
     row["display_path"] = path or _finding_title(finding, lang)
     row["display_steps"] = display_steps
     row["links_summary"] = ", ".join(_dedupe(links)) or t("link.none", lang)
@@ -726,7 +769,10 @@ def _instructions_section(
             continue
         tool = a.data.get("tool")
         text = text or t(
-            "prompts.instruction_text", lang, tool=tool or t("sec.unknown_tool", lang), detail=a.data.get("detail") or ""
+            "prompts.instruction_text",
+            lang,
+            tool=tool or t("sec.unknown_tool", lang),
+            detail=a.data.get("detail") or "",
         )
         event = first_event.get(a.id)
         ts = event.ts_utc if event is not None else None
@@ -895,7 +941,9 @@ def _generated_files_section(
         linked = [a for aid in dict.fromkeys(ids) if (a := related.get(aid)) is not None]
         origins = [line for a in linked if (line := _origin_line(a, first_event, tz, lang))]
         records = [
-            a for a in linked if a.kind is ArtifactKind.AI_TOOL_CALL and a.data.get("call_name") in OUTPUT_CALLS
+            a
+            for a in linked
+            if a.kind is ArtifactKind.AI_TOOL_CALL and a.data.get("call_name") in OUTPUT_CALLS
         ]
         record = records[0] if records else None
         event = first_event.get(record.id) if record is not None else None
@@ -956,7 +1004,12 @@ def _generated_jobs_section(presence: Sequence[Artifact], tz: str) -> list[dict[
 
 def _top_bullets(findings: Sequence[Finding], lang: str) -> list[str]:
     return [
-        t("summary.top", lang, severity=t(f"severity.{f.severity.value}", lang), title=_finding_title(f, lang))
+        t(
+            "summary.top",
+            lang,
+            severity=t(f"severity.{f.severity.value}", lang),
+            title=_finding_title(f, lang),
+        )
         for f in findings[:TOP_FINDINGS]
     ]
 
@@ -979,7 +1032,9 @@ def _summary_section(
         if queries or chat_count
         else none
     )
-    q3 = [t("summary.q3.count", lang, n=len(lifecycle)), *_top_bullets(lifecycle, lang)] if lifecycle else none
+    q3 = (
+        [t("summary.q3.count", lang, n=len(lifecycle)), *_top_bullets(lifecycle, lang)] if lifecycle else none
+    )
     q4 = [t("summary.q4.count", lang, n=len(exfil)), *_top_bullets(exfil, lang)] if exfil else none
     if attributions:
         q5 = [t("summary.q5.count", lang, n=len(attributions))]
@@ -1147,7 +1202,9 @@ def build_report_model(
             aid for cat in _DISPLAY_LINK_CATEGORIES for f in by_category[cat] for aid in f.artifact_ids
         ),
     )
-    chat_kind = {a.id: ("u" if a.data.get("role") == "user" else "a") for a in buckets[ArtifactKind.AI_CHAT_MESSAGE]}
+    chat_kind = {
+        a.id: ("u" if a.data.get("role") == "user" else "a") for a in buckets[ArtifactKind.AI_CHAT_MESSAGE]
+    }
     chat_kind.update({a.id: "c" for a in buckets[ArtifactKind.AI_TOOL_CALL]})
     relevant: list[bool] = []
     texts: list[str] = []
@@ -1235,7 +1292,9 @@ def build_report_model(
         timeline_relevant=tuple(relevant),
         timeline_text=tuple(texts),
         lifecycle_hidden=frozenset(
-            i for i, f in enumerate(by_category[FindingCategory.FILE_LIFECYCLE]) if _inventory_only(f, by_id, focus)
+            i
+            for i, f in enumerate(by_category[FindingCategory.FILE_LIFECYCLE])
+            if _inventory_only(f, by_id, focus)
         ),
         tool_calls=_tool_calls_section(buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang),
         instructions=instructions,

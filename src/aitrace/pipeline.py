@@ -29,7 +29,7 @@ from aitrace.report.html import render_html
 from aitrace.report.model import ReportModel, build_report_model
 from aitrace.report.pdf import render_pdf
 from aitrace.report.tabular import write_csvs, write_json
-from aitrace.report.volume import render_prompts_volume
+from aitrace.report.volume import render_prompts_volume, render_questions_volume
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -288,6 +288,7 @@ def render_reports(
             [
                 render_html(model, report_dir / "report.html"),
                 render_prompts_volume(model, report_dir / "prompts.html"),
+                render_questions_volume(model, report_dir / "questions.html"),
             ]
         ),
         "pdf": lambda: written.append(render_pdf(model, report_dir / "report.pdf")),

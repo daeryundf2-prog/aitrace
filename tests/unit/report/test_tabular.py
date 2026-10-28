@@ -12,6 +12,9 @@ from aitrace.report.tabular import (
     AI_QUERY_COLUMNS,
     ATTRIBUTION_COLUMNS,
     FINDINGS_COLUMNS,
+    QUESTION_CSV_CUT_NOTE,
+    QUESTION_CSV_TEXT_LIMIT,
+    _excel_question,
     write_csvs,
     write_json,
 )
@@ -19,6 +22,7 @@ from aitrace.report.tabular import (
 CSV_NAMES = (
     "timeline.csv",
     "ai_queries.csv",
+    "questions.csv",
     "findings.csv",
     "attributions.csv",
     "file_lifecycle.csv",
@@ -167,3 +171,13 @@ def test_write_json_round_trips_model_dict(tmp_path: Path) -> None:
     path = write_json(model, tmp_path / "report.json")
 
     assert json.loads(path.read_text(encoding="utf-8")) == model.to_dict()
+
+
+def test_question_text_is_cut_to_fit_one_excel_cell() -> None:
+    long_q = {"no": 1, "text": "가" * (QUESTION_CSV_TEXT_LIMIT + 5)}
+    cut = _excel_question(long_q)
+    assert cut["text"] == "가" * QUESTION_CSV_TEXT_LIMIT + QUESTION_CSV_CUT_NOTE
+    assert len(cut["text"]) <= 32_767
+    assert long_q["text"] == "가" * (QUESTION_CSV_TEXT_LIMIT + 5)
+    short_q = {"no": 2, "text": "짧은 질문"}
+    assert _excel_question(short_q) is short_q

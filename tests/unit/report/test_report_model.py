@@ -94,7 +94,9 @@ def _prov(path: str, plugin: str = "p") -> Provenance:
     return Provenance(evidence_id="ev", volume=0, source_path=path, plugin=plugin, plugin_version="1.0")
 
 
-def _artifact(kind: ArtifactKind, key: str, data: dict[str, object], path: str, user: str | None = None) -> Artifact:
+def _artifact(
+    kind: ArtifactKind, key: str, data: dict[str, object], path: str, user: str | None = None
+) -> Artifact:
     return Artifact(
         id=make_id("artifact", kind.value, key),
         kind=kind,
@@ -104,7 +106,9 @@ def _artifact(kind: ArtifactKind, key: str, data: dict[str, object], path: str, 
     )
 
 
-def _event(artifact: Artifact, ts: datetime | None, category: EventCategory, actor: Actor, index: int = 0) -> Event:
+def _event(
+    artifact: Artifact, ts: datetime | None, category: EventCategory, actor: Actor, index: int = 0
+) -> Event:
     return Event(
         id=make_id(artifact.id, "k", category.value, index),
         artifact_id=artifact.id,
@@ -161,7 +165,12 @@ def full_store(tmp_path: Path) -> CaseStore:
     encrypted = _artifact(
         ArtifactKind.AI_APP_PRESENCE,
         "a1",
-        {"tool": "ChatGPT Desktop", "kind": "store", "status": "encrypted_not_decoded", "detail": "conversations"},
+        {
+            "tool": "ChatGPT Desktop",
+            "kind": "store",
+            "status": "encrypted_not_decoded",
+            "detail": "conversations",
+        },
         "/Users/kim/Library/chatgpt",
         "kim",
     )
@@ -289,7 +298,9 @@ def full_store(tmp_path: Path) -> CaseStore:
 
 
 def _build(store: CaseStore, run_info: dict[str, object] | None = None, lang: str = "en") -> ReportModel:
-    custody = [{"seq": 1, "actor": "QA", "action": "intake", "detail": "hashed", "ts": "2026-03-01T09:00:00Z"}]
+    custody = [
+        {"seq": 1, "actor": "QA", "action": "intake", "detail": "hashed", "ts": "2026-03-01T09:00:00Z"}
+    ]
     return build_report_model(
         store, _case(), [_evidence()], custody, run_info or {"case_dir": "/tmp/a"}, "Asia/Seoul", lang
     )
@@ -297,7 +308,15 @@ def _build(store: CaseStore, run_info: dict[str, object] | None = None, lang: st
 
 def test_section_keys_order_matches_appendix_e(full_store: CaseStore) -> None:
     model = _build(full_store)
-    extras = ["tool_calls", "instructions", "generated_files", "generated_jobs", "chapters"]
+    extras = [
+        "tool_calls",
+        "instructions",
+        "generated_files",
+        "generated_jobs",
+        "questions",
+        "question_stats",
+        "chapters",
+    ]
     assert list(SECTION_KEYS) == APPENDIX_E_ORDER
     assert list(model.to_dict()) == [*APPENDIX_E_ORDER, *extras]
     assert list(json.loads(model.to_json())) == [*APPENDIX_E_ORDER, *extras]
@@ -317,7 +336,9 @@ def test_tool_calls_instructions_and_generated_files(full_store: CaseStore) -> N
     model = _build(full_store, lang="ko")
     (call,) = model.tool_calls
     assert call["role"] == "tool_call" and call["tool"] == "Claude Code" and call["session"] == "s1"
-    assert "Write" in call["text"] and "/Users/kim/proposal.md" in call["text"] and "body text" in call["text"]
+    assert (
+        "Write" in call["text"] and "/Users/kim/proposal.md" in call["text"] and "body text" in call["text"]
+    )
     (instruction,) = model.instructions
     assert instruction["source"] == "/Users/kim/repo/CLAUDE.md"
     assert "CLAUDE.md" in instruction["text"]
@@ -384,16 +405,51 @@ def test_ai_tools_rows_come_from_usage_inventory(tmp_path: Path) -> None:
     store = CaseStore(tmp_path / "inv.db")
     store.init_case(_case())
     inventory = [
-        {"tool": "OpenAI", "kind": "credential", "users": ["kim"], "first_seen": None, "last_seen": None,
-         "evidence_count": 1, "artifact_ids": ["a5"]},
-        {"tool": "Ollama", "kind": "local_llm", "users": ["kim"], "first_seen": "2026-03-01T09:00:00Z",
-         "last_seen": "2026-03-02T09:00:00Z", "evidence_count": 2, "artifact_ids": ["a4", "a6"]},
-        {"tool": "Claude Code", "kind": "cli", "users": ["kim"], "first_seen": "2026-03-01T10:00:00Z",
-         "last_seen": "2026-03-01T11:00:00Z", "evidence_count": 3, "artifact_ids": ["a3"]},
-        {"tool": "Claude", "kind": "web", "users": ["kim"], "first_seen": "2026-03-01T08:00:00Z",
-         "last_seen": "2026-03-01T08:30:00Z", "evidence_count": 1, "artifact_ids": ["a2"]},
-        {"tool": "ChatGPT", "kind": "web", "users": ["kim"], "first_seen": "2026-03-01T07:00:00Z",
-         "last_seen": "2026-03-01T07:30:00Z", "evidence_count": 1, "artifact_ids": ["a1"]},
+        {
+            "tool": "OpenAI",
+            "kind": "credential",
+            "users": ["kim"],
+            "first_seen": None,
+            "last_seen": None,
+            "evidence_count": 1,
+            "artifact_ids": ["a5"],
+        },
+        {
+            "tool": "Ollama",
+            "kind": "local_llm",
+            "users": ["kim"],
+            "first_seen": "2026-03-01T09:00:00Z",
+            "last_seen": "2026-03-02T09:00:00Z",
+            "evidence_count": 2,
+            "artifact_ids": ["a4", "a6"],
+        },
+        {
+            "tool": "Claude Code",
+            "kind": "cli",
+            "users": ["kim"],
+            "first_seen": "2026-03-01T10:00:00Z",
+            "last_seen": "2026-03-01T11:00:00Z",
+            "evidence_count": 3,
+            "artifact_ids": ["a3"],
+        },
+        {
+            "tool": "Claude",
+            "kind": "web",
+            "users": ["kim"],
+            "first_seen": "2026-03-01T08:00:00Z",
+            "last_seen": "2026-03-01T08:30:00Z",
+            "evidence_count": 1,
+            "artifact_ids": ["a2"],
+        },
+        {
+            "tool": "ChatGPT",
+            "kind": "web",
+            "users": ["kim"],
+            "first_seen": "2026-03-01T07:00:00Z",
+            "last_seen": "2026-03-01T07:30:00Z",
+            "evidence_count": 1,
+            "artifact_ids": ["a1"],
+        },
     ]
     store.add_results(
         [
@@ -537,40 +593,102 @@ def test_i18n_tables_cover_the_same_keys() -> None:
 def _display_store(tmp_path: Path) -> CaseStore:
     store = CaseStore(tmp_path / "display.db")
     store.init_case(_case())
-    common = {"narrative": "n", "artifact_ids": (), "event_ids": (), "confidence": 0.7, "band": ConfidenceBand.MODERATE}
+    common = {
+        "narrative": "n",
+        "artifact_ids": (),
+        "event_ids": (),
+        "confidence": 0.7,
+        "band": ConfidenceBand.MODERATE,
+    }
     inventory = [
-        {"tool": "Claude Code", "kind": "cli", "users": ["kim"], "first_seen": "2026-03-01T10:00:00Z",
-         "last_seen": "2026-03-01T11:00:00Z", "evidence_count": 3, "artifact_ids": []},
+        {
+            "tool": "Claude Code",
+            "kind": "cli",
+            "users": ["kim"],
+            "first_seen": "2026-03-01T10:00:00Z",
+            "last_seen": "2026-03-01T11:00:00Z",
+            "evidence_count": 3,
+            "artifact_ids": [],
+        },
     ]
     store.add_results(
         [
-            Finding(id="u", category=FindingCategory.AI_TOOL_USAGE, severity=Severity.INFO,
-                    title="AI tools observed: 1", rule_id=None, limitations=(),
-                    data={"inventory": inventory}, **common),
-            Finding(id="l", category=FindingCategory.FILE_LIFECYCLE, severity=Severity.MEDIUM,
-                    title="File lifecycle: /Users/kim/a.md", rule_id="FILE-LIFECYCLE",
-                    limitations=("USB insertion does not prove file copy",),
-                    data={"path": "/Users/kim/a.md",
-                          "lifecycle": [
-                              {"ts": "2026-03-01T11:00:00Z", "event": "deleted", "artifact_id": "x"},
-                              {"ts": "2026-03-01T09:00:00Z", "event": "created", "artifact_id": "x"},
-                          ],
-                          "links": [{"kind": "agent_write", "artifact_id": "x", "confidence": 0.9}]},
-                    **common),
-            Finding(id="x1", category=FindingCategory.EXFIL_CHANNEL, severity=Severity.HIGH,
-                    title="Exfiltration channel: TR-SCP to 203.0.113.10", rule_id="TR-SCP", limitations=(),
-                    data={"channel": "TR-SCP to 203.0.113.10", "destination": "203.0.113.10",
-                          "source_paths": ["C:\\data\\secret.zip"], "actor": "human",
-                          "time": "2026-03-01T09:30:00Z", "user": "kim"}, **common),
-            Finding(id="x2", category=FindingCategory.EXFIL_CHANNEL, severity=Severity.HIGH,
-                    title="Exfiltration channel: TR-SCP to 203.0.113.10", rule_id="TR-SCP", limitations=(),
-                    data={"channel": "TR-SCP to 203.0.113.10", "destination": "203.0.113.10",
-                          "source_paths": [], "actor": "human", "time": None, "user": "kim"}, **common),
-            Attribution(id="at", subject="/a.md", subject_artifact_ids=(), verdict=Verdict.UNDETERMINED,
-                        confidence=0.4, band=ConfidenceBand.WEAK,
-                        signals=(Signal(type=SignalType.TIME_PROXIMITY, direction="ai", weight=0.3,
-                                        artifact_ids=(), note="n"),),
-                        rationale="r", limitations=("temporal proximity alone does not prove causation",)),
+            Finding(
+                id="u",
+                category=FindingCategory.AI_TOOL_USAGE,
+                severity=Severity.INFO,
+                title="AI tools observed: 1",
+                rule_id=None,
+                limitations=(),
+                data={"inventory": inventory},
+                **common,
+            ),
+            Finding(
+                id="l",
+                category=FindingCategory.FILE_LIFECYCLE,
+                severity=Severity.MEDIUM,
+                title="File lifecycle: /Users/kim/a.md",
+                rule_id="FILE-LIFECYCLE",
+                limitations=("USB insertion does not prove file copy",),
+                data={
+                    "path": "/Users/kim/a.md",
+                    "lifecycle": [
+                        {"ts": "2026-03-01T11:00:00Z", "event": "deleted", "artifact_id": "x"},
+                        {"ts": "2026-03-01T09:00:00Z", "event": "created", "artifact_id": "x"},
+                    ],
+                    "links": [{"kind": "agent_write", "artifact_id": "x", "confidence": 0.9}],
+                },
+                **common,
+            ),
+            Finding(
+                id="x1",
+                category=FindingCategory.EXFIL_CHANNEL,
+                severity=Severity.HIGH,
+                title="Exfiltration channel: TR-SCP to 203.0.113.10",
+                rule_id="TR-SCP",
+                limitations=(),
+                data={
+                    "channel": "TR-SCP to 203.0.113.10",
+                    "destination": "203.0.113.10",
+                    "source_paths": ["C:\\data\\secret.zip"],
+                    "actor": "human",
+                    "time": "2026-03-01T09:30:00Z",
+                    "user": "kim",
+                },
+                **common,
+            ),
+            Finding(
+                id="x2",
+                category=FindingCategory.EXFIL_CHANNEL,
+                severity=Severity.HIGH,
+                title="Exfiltration channel: TR-SCP to 203.0.113.10",
+                rule_id="TR-SCP",
+                limitations=(),
+                data={
+                    "channel": "TR-SCP to 203.0.113.10",
+                    "destination": "203.0.113.10",
+                    "source_paths": [],
+                    "actor": "human",
+                    "time": None,
+                    "user": "kim",
+                },
+                **common,
+            ),
+            Attribution(
+                id="at",
+                subject="/a.md",
+                subject_artifact_ids=(),
+                verdict=Verdict.UNDETERMINED,
+                confidence=0.4,
+                band=ConfidenceBand.WEAK,
+                signals=(
+                    Signal(
+                        type=SignalType.TIME_PROXIMITY, direction="ai", weight=0.3, artifact_ids=(), note="n"
+                    ),
+                ),
+                rationale="r",
+                limitations=("temporal proximity alone does not prove causation",),
+            ),
         ]
     )
     store.finalize()
@@ -601,10 +719,16 @@ def test_display_fields_ko(tmp_path: Path) -> None:
 
 def test_display_fields_en_and_label_tables() -> None:
     expected_ko = {
-        "kind.local_llm": "로컬 LLM", "role.tool": "도구 호출", "actor.unknown": "미상",
-        "category.remote_access": "원격 접속", "category.device": "장치 연결", "severity.info": "정보",
-        "verdict.ai_assisted": "AI 보조", "channel.TR-PS-COPY": "네트워크 공유 복사",
-        "channel.rdp": "원격 데스크톱(RDP)", "channel.agent": "AI 에이전트 실행",
+        "kind.local_llm": "로컬 LLM",
+        "role.tool": "도구 호출",
+        "actor.unknown": "미상",
+        "category.remote_access": "원격 접속",
+        "category.device": "장치 연결",
+        "severity.info": "정보",
+        "verdict.ai_assisted": "AI 보조",
+        "channel.TR-PS-COPY": "네트워크 공유 복사",
+        "channel.rdp": "원격 데스크톱(RDP)",
+        "channel.agent": "AI 에이전트 실행",
     }
     for key, text in expected_ko.items():
         assert t(key, "ko") == text

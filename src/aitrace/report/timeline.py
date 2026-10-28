@@ -116,7 +116,9 @@ def display_summary(event: Event, artifact: Artifact | None, lang: str) -> str:
     if kind is ArtifactKind.MEDIA_PROVENANCE and event.category is EventCategory.BROWSING and event.subject:
         return t("tl.cache_image", lang, url=event.subject)
     if kind is ArtifactKind.EXECUTION:
-        key = {"prefetch": "tl.prefetch", "amcache": "tl.amcache", "srum": "tl.srum"}.get(str(data.get("source")))
+        key = {"prefetch": "tl.prefetch", "amcache": "tl.amcache", "srum": "tl.srum"}.get(
+            str(data.get("source"))
+        )
         if key and data.get("program"):
             return t(key, lang, program=data["program"])
     if kind is ArtifactKind.NETWORK_USAGE and data.get("program"):

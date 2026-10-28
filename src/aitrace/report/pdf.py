@@ -87,7 +87,9 @@ def _paragraph(pdf: _ReportPDF, text: str) -> None:
     pdf.ln(1.5)
 
 
-def _row_fits_page(pdf: _ReportPDF, row: Sequence[str], widths: Sequence[float], *, compact: bool = False) -> bool:
+def _row_fits_page(
+    pdf: _ReportPDF, row: Sequence[str], widths: Sequence[float], *, compact: bool = False
+) -> bool:
     size, line = (COMPACT_PT, COMPACT_LINE_MM) if compact else (TABLE_PT, TABLE_LINE_MM)
     pdf.set_font(SERIF, "", size)
     most = 0
@@ -109,7 +111,9 @@ def _grid(
     *,
     compact: bool = False,
 ) -> None:
-    size, line, pad = (COMPACT_PT, COMPACT_LINE_MM, COMPACT_PAD_MM) if compact else (TABLE_PT, TABLE_LINE_MM, CELL_PAD_MM)
+    size, line, pad = (
+        (COMPACT_PT, COMPACT_LINE_MM, COMPACT_PAD_MM) if compact else (TABLE_PT, TABLE_LINE_MM, CELL_PAD_MM)
+    )
     pdf.set_font(SERIF, "", size)
     with pdf.table(
         headings_style=FontFace(emphasis="BOLD", size_pt=size, color=(0, 0, 0), fill_color=HEAD_FILL),
@@ -196,7 +200,9 @@ def _toc_renderer(title: str) -> Any:
             pdf.set_font(SERIF, "", BODY_PT)
             pdf.set_x(pdf.l_margin + indent)
             pdf.cell(pdf.epw - indent - page_w, 7, section.name, link=link)
-            pdf.cell(page_w, 7, str(section.page_number), align="R", link=link, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(
+                page_w, 7, str(section.page_number), align="R", link=link, new_x=XPos.LMARGIN, new_y=YPos.NEXT
+            )
 
     return render
 

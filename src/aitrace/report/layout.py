@@ -10,7 +10,6 @@ from typing import Any
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.report.i18n import t
 from aitrace.report.model import (
-    AI_QUERIES_CSV_PATH,
     ATTRIBUTIONS_CSV_PATH,
     COLUMNS,
     EXCERPT_CHARS,
@@ -20,9 +19,14 @@ from aitrace.report.model import (
     GENERATED_ROW_CAP,
     INSTRUCTION_ROW_KINDS,
     MACHINE_ROW_CAP,
-    PROMPT_ROW_CAP,
     PROMPTS_VOLUME_PATH,
+    QUESTION_EXCERPT_CAP,
+    QUESTION_EXCERPT_CHARS,
+    QUESTION_FLAGGED_CAP,
+    QUESTIONS_CSV_PATH,
+    QUESTIONS_VOLUME_PATH,
     REPORT_JSON_PATH,
+    SENSITIVE_TASKS,
     SESSION_ROW_CAP,
     SHA_PREFIX_CHARS,
     TIMELINE_CHAT_DAY_THRESHOLD,
@@ -919,99 +923,127 @@ def _machines(model: ReportModel) -> dict[tuple[str, str | None], str]:
     return out
 
 
-def _user_excerpts(
-    model: ReportModel, users: Sequence[Mapping[str, Any]]
-) -> tuple[list[tuple[Mapping[str, Any], str]], int]:
-    """Rows to show plus the number of flagged prompts: everything when small, else flagged + session edges."""
-    lang = model.lang
-    meta = model.query_meta
-    if len(users) <= PROMPT_ROW_CAP:
-        return [(u, _flag_label(u, meta, lang, ())) for u in users], 0
-    flagged = [u for u in users if (meta.get(str(u.get("artifact_id"))) or {}).get("flags")]
-    edges: dict[tuple[str, str, str | None], list[Mapping[str, Any]]] = {}
-    for u in users:
-        key = (tool_label(u.get("tool"), lang), machine_label(u, meta), u.get("session"))
-        pair = edges.setdefault(key, [u, u])
-        pair[1] = u
-    edge_label: dict[str, list[str]] = {}
-    for first, last in edges.values():
-        edge_label.setdefault(str(first.get("artifact_id")), []).append("flag.first")
-        if last is not first:
-            edge_label.setdefault(str(last.get("artifact_id")), []).append("flag.last")
-    chosen: dict[str, Mapping[str, Any]] = {}
-    for u in flagged:
-        if len(chosen) < PROMPT_ROW_CAP:
-            chosen[str(u.get("artifact_id"))] = u
-    for first, last in edges.values():
-        for u in (first, last):
-            if len(chosen) < PROMPT_ROW_CAP:
-                chosen.setdefault(str(u.get("artifact_id")), u)
-    shown = sorted(chosen.values(), key=_stamp)
+def question_clean_rows(stats: Mapping[str, Any], lang: str) -> list[tuple[str, str]]:
+    excluded = stats.get("excluded") or {}
+    rows = [(t("q.raw", lang), f"{int(stats.get('raw') or 0):,}")]
+    rows += [(t(f"q.ex.{kind}", lang), f"{int(n):,}") for kind, n in excluded.items()]
+    rows += [
+        (t("q.dup", lang), f"{int(stats.get('duplicates') or 0):,}"),
+        (t("q.human", lang), f"{int(stats.get('human') or 0):,}"),
+        (t("q.attachments", lang), f"{int(stats.get('attachments') or 0):,}"),
+    ]
+    return rows
+
+
+def question_month_table(stats: Mapping[str, Any], lang: str) -> tuple[list[str], list[list[str]]]:
+    by_month: Mapping[str, Mapping[str, int]] = stats.get("by_month") or {}
+    totals: dict[str, int] = {}
+    for counts in by_month.values():
+        for machine, n in counts.items():
+            totals[machine] = totals.get(machine, 0) + n
+    machines = sorted(totals, key=lambda m: (-totals[m], m))
+    headers = [t("q.col_month", lang), *machines, t("q.col_total", lang)]
+    rows = [
+        [month, *(f"{counts.get(m, 0):,}" for m in machines), f"{sum(counts.values()):,}"]
+        for month, counts in by_month.items()
+    ]
+    rows.append([t("q.col_total", lang), *(f"{totals[m]:,}" for m in machines), f"{sum(totals.values()):,}"])
+    return headers, rows
+
+
+def question_topic_rows(
+    questions: Sequence[Mapping[str, Any]], stats: Mapping[str, Any], lang: str
+) -> list[tuple[str, str, str]]:
+    first: dict[str, Mapping[str, Any]] = {}
+    for q in questions:
+        for topic in q.get("topics") or ():
+            first.setdefault(topic, q)
     return [
-        (u, _flag_label(u, meta, lang, edge_label.get(str(u.get("artifact_id")), ()))) for u in shown
-    ], len(flagged)
+        (
+            t(f"flag.{topic}", lang),
+            f"{int(n):,}",
+            f"{_text(first[topic].get('date'))} {_excerpt(first[topic].get('text'), 120)}".strip(),
+        )
+        for topic, n in (stats.get("topics") or {}).items()
+        if topic in first
+    ]
 
 
-def _flag_label(
-    row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]], lang: str, edges: Sequence[str]
-) -> str:
-    keys = [f"flag.{f}" for f in (meta.get(str(row.get("artifact_id"))) or {}).get("flags") or ()] + list(
-        edges
-    )
-    return ", ".join(t(k, lang) for k in keys) or t("flag.all", lang)
+def question_where(q: Mapping[str, Any]) -> str:
+    return "\n".join(v for v in (_text(q.get("machine")), _text(q.get("channel"))) if v)
+
+
+def question_excerpts(questions: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    if len(questions) <= QUESTION_EXCERPT_CAP:
+        return list(questions)
+    flagged = [q for q in questions if set(q.get("topics") or ()) & set(SENSITIVE_TASKS)][
+        :QUESTION_FLAGGED_CAP
+    ]
+    picked = {int(q["no"]) for q in flagged}
+    days: dict[str, Mapping[str, Any]] = {}
+    for q in questions:
+        days.setdefault(_text(q.get("date")), q)
+    firsts = [q for q in days.values() if int(q["no"]) not in picked]
+    room = max(QUESTION_EXCERPT_CAP - len(flagged), 0)
+    if len(firsts) > room:
+        step = len(firsts) / room if room else 0
+        firsts = [firsts[int(i * step)] for i in range(room)]
+    return sorted([*flagged, *firsts], key=lambda q: int(q["no"]))
 
 
 def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, Any]]) -> None:
     lang = b.lang
-    b.section(t("sec.user_excerpt", lang))
-    if not users:
+    b.section(t("q.section", lang))
+    stats = model.question_stats
+    if not users or not stats.get("raw"):
         b.para(t("summary.none", lang))
         return
-    selected, flagged = _user_excerpts(model, users)
-    chars = _excerpt_chars(len(selected))
-    if len(users) <= PROMPT_ROW_CAP:
-        b.para(t("user.note_all", lang, n=len(users)))
-    else:
-        b.para(
-            t(
-                "user.note_cap",
-                lang,
-                total=len(users),
-                shown=len(selected),
-                flagged=flagged,
-                cap=PROMPT_ROW_CAP,
-                chars=chars,
-                volume=PROMPTS_VOLUME_PATH,
-                csv=AI_QUERIES_CSV_PATH,
-            )
+    b.para(
+        t(
+            "q.ch3_intro",
+            lang,
+            raw=f"{int(stats['raw']):,}",
+            human=f"{int(stats.get('human') or 0):,}",
+            volume=QUESTIONS_VOLUME_PATH,
+            csv=QUESTIONS_CSV_PATH,
         )
-    machines = _machines(model)
-    if len(selected) > EXCERPT_DENSE_ROWS:
-        b.para(t("table.ditto_note", lang, mark=DITTO))
+    )
     b.table(
-        (
-            t("prompts.col_time", lang),
-            t("user.col_where", lang),
-            t("user.col_flag", lang),
-            t("prompts.col_text", lang),
-            t("prompts.col_source", lang),
-        ),
-        _ditto(
-            [
-                (
-                    _text(u.get("ts_local")) or "-",
-                    _where(u, model, machines),
-                    flag,
-                    _excerpt(u.get("text"), chars),
-                    _text(u.get("source")),
-                )
-                for u, flag in selected
-            ],
-            (1, 4),
-        ),
-        (3, 3, 2, 12, 3) if len(selected) > EXCERPT_DENSE_ROWS else (3, 4, 2, 9, 4),
-        raw=(3,),
-        compact=len(selected) > EXCERPT_DENSE_ROWS,
+        (t("q.col_item", lang), t("q.col_count", lang)),
+        question_clean_rows(stats, lang),
+        (7, 2),
+        caption=t("q.clean_title", lang),
+    )
+    questions = model.questions
+    if not questions:
+        b.para(t("q.none", lang))
+        return
+    headers, rows = question_month_table(stats, lang)
+    b.table(headers, rows, (2, *([2] * (len(headers) - 1))), caption=t("q.period_title", lang))
+    topics = question_topic_rows(questions, stats, lang)
+    if topics:
+        b.table(
+            (t("q.col_topic", lang), t("q.col_count", lang), t("q.col_example", lang)),
+            topics,
+            (3, 2, 10),
+            caption=t("q.topic_title", lang),
+        )
+        b.para(t("q.topic_note", lang))
+    selected = question_excerpts(questions)
+    b.sub(t("q.ch3_excerpt", lang))
+    b.para(t("q.ch3_excerpt_note", lang, n=len(selected), chars=QUESTION_EXCERPT_CHARS))
+    b.table(
+        (t("q.col_time", lang), t("q.col_where", lang), t("q.col_text", lang)),
+        [
+            (
+                _text(q.get("ts_local")) or "-",
+                question_where(q),
+                _excerpt(q.get("text"), QUESTION_EXCERPT_CHARS),
+            )
+            for q in selected
+        ],
+        (3, 3, 12),
+        raw=(2,),
     )
 
 

@@ -47,10 +47,14 @@ def _event(
     )
 
 
-FOCUS = Focus(paths=focus_paths([ATTRIBUTED], [_artifact(ArtifactKind.AI_TOOL_CALL, file_path="/tmp/out.py")]))
+FOCUS = Focus(
+    paths=focus_paths([ATTRIBUTED], [_artifact(ArtifactKind.AI_TOOL_CALL, file_path="/tmp/out.py")])
+)
 INVENTORY = _artifact(ArtifactKind.FILE_RECORD, path="C:/Windows/x.dll")
 VISIT = _artifact(ArtifactKind.BROWSER_VISIT, browser="Chrome", url="https://example.com")
-AI_VISIT = _artifact(ArtifactKind.BROWSER_VISIT, browser="Chrome", url="https://claude.ai", ai_service="Claude")
+AI_VISIT = _artifact(
+    ArtifactKind.BROWSER_VISIT, browser="Chrome", url="https://claude.ai", ai_service="Claude"
+)
 SHELL_PLAIN = _artifact(ArtifactKind.SHELL_COMMAND, tags=[])
 SHELL_TRANSFER = _artifact(ArtifactKind.SHELL_COMMAND, tags=["transfer"])
 AMCACHE = _artifact(ArtifactKind.EXECUTION, source="amcache", program="calc.exe")

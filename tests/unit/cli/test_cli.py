@@ -24,11 +24,13 @@ LAYOUT = (
     "logs/aitrace.log",
     "report/report.html",
     "report/prompts.html",
+    "report/questions.html",
     "report/report.pdf",
     "report/report.docx",
     "report/report.json",
     "report/csv/timeline.csv",
     "report/csv/ai_queries.csv",
+    "report/csv/questions.csv",
     "report/csv/findings.csv",
     "report/csv/attributions.csv",
     "report/csv/file_lifecycle.csv",
@@ -93,7 +95,17 @@ def evidence(tmp_path: Path) -> Path:
 def _analyze(evidence: Path, case_dir: Path, *extra: str) -> tuple[int, str]:
     result = RUNNER.invoke(
         app,
-        ["analyze", str(evidence), "--case-dir", str(case_dir), "--case-number", "T-1", "--examiner", "QA", *extra],
+        [
+            "analyze",
+            str(evidence),
+            "--case-dir",
+            str(case_dir),
+            "--case-number",
+            "T-1",
+            "--examiner",
+            "QA",
+            *extra,
+        ],
     )
     return result.exit_code, result.output
 
@@ -115,7 +127,9 @@ def test_analyze_dir_tree_writes_full_layout_with_intact_custody(evidence: Path,
         assert action in actions
     analyzers = [e["detail"]["analyzer"] for e in entries if e["action"] == "analyzer_run"]
     assert analyzers == ["ai_sessions", "file_correlation", "exfil_channels", "attribution"]
-    rendered = {e["detail"]["path"]: e["detail"]["sha256"] for e in entries if e["action"] == "report_rendered"}
+    rendered = {
+        e["detail"]["path"]: e["detail"]["sha256"] for e in entries if e["action"] == "report_rendered"
+    }
     assert set(rendered) == {rel for rel in LAYOUT if rel.startswith("report/")}
     for rel, digest in rendered.items():
         assert digest in output
@@ -190,7 +204,9 @@ def test_report_rerenders_intact_case(evidence: Path, tmp_path: Path) -> None:
     code, output = _analyze(evidence, case_dir, "--formats", "json")
     assert code == 0, output
 
-    result = RUNNER.invoke(app, ["report", "--case-dir", str(case_dir), "--formats", "json,csv", "--lang", "en"])
+    result = RUNNER.invoke(
+        app, ["report", "--case-dir", str(case_dir), "--formats", "json,csv", "--lang", "en"]
+    )
 
     assert result.exit_code == 0, result.output
     assert (case_dir / "report/csv/timeline.csv").is_file()

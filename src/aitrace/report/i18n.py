@@ -385,6 +385,81 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "flag.first": ("세션 첫 입력", "First of session"),
     "flag.last": ("세션 마지막 입력", "Last of session"),
     "flag.all": ("입력", "Input"),
+    "flag.TASK-CODE": ("코드·개발", "Code and development"),
+    "flag.TASK-WRITE": ("문서 작성·요약", "Writing and summaries"),
+    "flag.TASK-TRANSLATE": ("번역", "Translation"),
+    "flag.TASK-IMAGE": ("이미지", "Images"),
+    "flag.TASK-DATA": ("데이터·표 분석", "Data and tables"),
+    "flag.TASK-SEARCH": ("검색·조회", "Search and lookup"),
+    "q.title": ("사용자 직접 질의 목록", "Questions Typed by the User"),
+    "q.section": ("사용자 직접 질의", "Questions Typed by the User"),
+    "q.intro": (
+        (
+            "이 별책은 AI 도구에 사람이 직접 입력한 질의만 모아 일자순으로 정리한 것임. 대화 기록에 사용자 역할로 저장되었으나 "
+            "사람이 입력하지 않은 기록(대화 압축 요약, 시스템·게이트웨이 알림, 에이전트 간 메시지, 예약 작업 지시)은 제외하였고, "
+            "메신저 게이트웨이가 덧붙인 안내 문구는 지우고 입력 내용만 남겼음. 같은 시각에 같은 내용으로 두 번 이상 기록된 질의는 "
+            "한 건으로 합쳤음. 같은 목록을 {csv}에도 수록하였음."
+        ),
+        (
+            "This volume lists only the questions a person typed into the AI tools, by date. Records stored with the user "
+            "role that no person typed (context-compaction summaries, system and gateway notices, agent-to-agent messages, "
+            "scheduled job prompts) are excluded, gateway framing text is removed so only the typed text remains, and a "
+            "question recorded more than once at the same time with the same text is counted once. The same list is in {csv}."
+        ),
+    ),
+    "q.clean_title": ("정제 기준 및 결과", "Cleaning Rules and Result"),
+    "q.col_item": ("구분", "Item"),
+    "q.col_count": ("건수", "Count"),
+    "q.raw": ("사용자 역할로 기록된 전체 메시지", "All messages recorded with the user role"),
+    "q.ex.compaction": ("제외: 대화 압축 요약(에이전트 생성)", "Excluded: context-compaction summaries"),
+    "q.ex.system_notice": ("제외: 시스템·게이트웨이 알림", "Excluded: system and gateway notices"),
+    "q.ex.a2a": ("제외: 에이전트 간(A2A) 메시지", "Excluded: agent-to-agent (A2A) messages"),
+    "q.ex.automated": ("제외: 예약 작업·칸반 자동 지시", "Excluded: scheduled job and kanban prompts"),
+    "q.ex.empty": ("제외: 정리 후 내용 없음", "Excluded: empty after cleaning"),
+    "q.dup": ("같은 시각·같은 내용 중복 기록(한 건으로 합침)", "Duplicate records merged into one"),
+    "q.human": ("사람이 직접 입력한 질의", "Questions typed by a person"),
+    "q.attachments": ("그중 파일·이미지 첨부가 있는 질의", "Of which with an attached file or image"),
+    "q.period_title": ("월별·머신별 질의 건수", "Questions by Month and Machine"),
+    "q.col_month": ("월", "Month"),
+    "q.col_total": ("합계", "Total"),
+    "q.topic_title": ("질의 내용 분류(키워드 기준)", "Question Topics (Keyword-Based)"),
+    "q.topic_note": (
+        "분류는 키워드 일치 기준이며 한 질의가 여러 분류에 해당할 수 있고, 질의의 의도를 판정한 것은 아님.",
+        "Topics are keyword matches; a question can fall under several topics, and no intent is inferred.",
+    ),
+    "q.col_topic": ("분류", "Topic"),
+    "q.col_example": ("예시(최초 질의)", "Example (earliest question)"),
+    "q.days_title": ("일자별 목차", "Dates"),
+    "q.list_title": ("질의 전문", "Full Questions"),
+    "q.day": ("{date} ({n}건)", "{date} ({n})"),
+    "q.undated": ("일시 미상", "Undated"),
+    "q.meta_dup": ("같은 내용 {n}건 추가 기록", "{n} more identical record(s)"),
+    "q.meta_attach": ("첨부 있음", "with attachment"),
+    "q.none": ("사람이 직접 입력한 질의는 확인되지 않음.", "No questions typed by a person were found."),
+    "q.ch3_intro": (
+        (
+            "사용자 역할로 기록된 메시지 {raw}건 중 사람이 직접 입력한 질의는 {human}건으로 확인됨. 정제 기준과 건수는 아래 표와 같으며, "
+            "질의 전문은 별책({volume})과 {csv}에 일자순으로 수록하였음."
+        ),
+        (
+            "Of {raw} message(s) recorded with the user role, {human} are questions typed by a person. The cleaning rules "
+            "and counts are below; the full questions are in the companion volume ({volume}) and {csv}, by date."
+        ),
+    ),
+    "q.ch3_excerpt": ("질의 발췌", "Question Excerpts"),
+    "q.ch3_excerpt_note": (
+        (
+            "아래는 분류 표지(보안 우회·유출)가 붙은 질의와 각 일자의 첫 질의를 시간순으로 {n}건 발췌한 것이며, "
+            "각 질의는 앞 {chars}자까지 표시하였음."
+        ),
+        (
+            "Below are {n} questions in time order: those flagged (security bypass, exfiltration) and the first question "
+            "of each date, each shown up to {chars} characters."
+        ),
+    ),
+    "q.col_time": ("일시(현지)", "Time (local)"),
+    "q.col_where": ("머신·채널", "Machine / channel"),
+    "q.col_text": ("질의", "Question"),
     "ai.note_all": (
         "AI 응답 {a}건, 도구 실행 {c}건을 모두 표시하였음.",
         "All {a} AI response(s) and {c} tool call(s) are shown.",

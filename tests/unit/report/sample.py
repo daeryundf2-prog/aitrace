@@ -22,7 +22,17 @@ KO_CHAPTERS = [
     "별첨3 서명",
 ]
 
-BANNED_WORDS = ("핵심", "전수", "종합적으로", "결론적으로 살펴보면", "놀랍게도", "매우", "반드시 확인", "한눈에", "!")
+BANNED_WORDS = (
+    "핵심",
+    "전수",
+    "종합적으로",
+    "결론적으로 살펴보면",
+    "놀랍게도",
+    "매우",
+    "반드시 확인",
+    "한눈에",
+    "!",
+)
 ENGLISH_PREFIXES = (
     "File created: ",
     "File modified: ",
@@ -35,7 +45,9 @@ ENGLISH_PREFIXES = (
     "AI image viewed (cache)",
     "Claude Code tool call:",
 )
-_EMOJI = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\u2190-\u21ff\u2b00-\u2bff\u2460-\u24ff\u2605\u2713\u2714]")
+_EMOJI = re.compile(
+    "[\U0001f000-\U0001faff\u2600-\u27bf\u2190-\u21ff\u2b00-\u2bff\u2460-\u24ff\u2605\u2713\u2714]"
+)
 
 
 def find_banned(text: str) -> list[str]:
@@ -89,7 +101,9 @@ def make_model(lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해
         q("Codex", "s2", "user", "08:00:00", "다른 도구 질의"),
         q("Claude Code", "s0", "user", "07:00:00", "이른 세션 질의"),
     ]
-    tool_call = q("Claude Code", "s1", "assistant", "09:07:00", "호출 도구 Write, 대상 경로 /Users/kim/proposal.md")
+    tool_call = q(
+        "Claude Code", "s1", "assistant", "09:07:00", "호출 도구 Write, 대상 경로 /Users/kim/proposal.md"
+    )
     tool_call.update(role="tool_call", role_label=t("prompts.tool_call", lang), call_name="Write")
     instruction = {
         "ts_utc": None,
@@ -129,11 +143,18 @@ def make_model(lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해
                 "verification_label": t("verification.match", lang),
                 "limitations": [],
                 "limitations_display": [],
-                "volumes": [{"index": 0, "fs_type": "NtfsFilesystem", "label": "WIN", "os_family": "windows"}],
+                "volumes": [
+                    {"index": 0, "fs_type": "NtfsFilesystem", "label": "WIN", "os_family": "windows"}
+                ],
                 "users": [{"name": "kim"}],
             }
         ],
-        tools={"aitrace_version": "0.1.0", "python": "3.12", "dissect": {"dissect.target": "3.25"}, "os": "Darwin"},
+        tools={
+            "aitrace_version": "0.1.0",
+            "python": "3.12",
+            "dissect": {"dissect.target": "3.25"},
+            "os": "Darwin",
+        },
         methodology={
             "paragraphs": [t("methodology.p1", lang)],
             "standards_intro": t("methodology.standards_intro", lang),
@@ -180,11 +201,23 @@ def make_model(lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해
         exports=[{"export_path": "export/files/0/a.md", "size": 3, "sha256": "ee"}],
         coverage={
             "plugin_runs": [
-                {"name": "browser", "version": "1.0", "status": "ok", "records": 3, "warnings": 0, "error": None}
+                {
+                    "name": "browser",
+                    "version": "1.0",
+                    "status": "ok",
+                    "records": 3,
+                    "warnings": 0,
+                    "error": None,
+                }
             ],
             "parse_warnings": [],
             "not_decoded": [
-                {"tool": "ChatGPT Desktop", "status": "encrypted_not_decoded", "detail": "conversations", "source_path": "/x"}
+                {
+                    "tool": "ChatGPT Desktop",
+                    "status": "encrypted_not_decoded",
+                    "detail": "conversations",
+                    "source_path": "/x",
+                }
             ],
             "findings": [],
         },

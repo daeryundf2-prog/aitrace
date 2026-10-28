@@ -16,7 +16,9 @@ _SPEC.loader.exec_module(sample)
 BODY_START = 2
 
 
-def _render(tmp_path: Path, lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해줘") -> tuple[Path, list[str], list[tuple[float, float]]]:
+def _render(
+    tmp_path: Path, lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해줘"
+) -> tuple[Path, list[str], list[tuple[float, float]]]:
     path = render_pdf(sample.make_model(lang, prompt=prompt), tmp_path / "report.pdf")
     pdf = pdfium.PdfDocument(str(path))
     texts = [page.get_textpage().get_text_range() for page in pdf]

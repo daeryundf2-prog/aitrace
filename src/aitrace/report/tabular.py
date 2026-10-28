@@ -8,6 +8,22 @@ from typing import Any
 
 from aitrace.report.model import TIMELINE_COLUMNS, ReportModel
 
+QUESTION_CSV_TEXT_LIMIT = (
+    32_000  # Excel holds at most 32,767 characters per cell; the full text is in questions.html
+)
+QUESTION_CSV_CUT_NOTE = " …(이하 생략, 전문은 report/questions.html)"
+QUESTION_COLUMNS: tuple[str, ...] = (
+    "no",
+    "ts_local",
+    "machine",
+    "channel",
+    "session",
+    "topics",
+    "attachment",
+    "duplicates",
+    "text",
+    "source",
+)
 AI_QUERY_COLUMNS: tuple[str, ...] = (
     "ts_utc",
     "ts_local",
@@ -88,11 +104,19 @@ def write_json(model: ReportModel, path: Path) -> Path:
     return path
 
 
+def _excel_question(q: Mapping[str, Any]) -> Mapping[str, Any]:
+    text = str(q.get("text") or "")
+    if len(text) <= QUESTION_CSV_TEXT_LIMIT:
+        return q
+    return {**q, "text": text[:QUESTION_CSV_TEXT_LIMIT] + QUESTION_CSV_CUT_NOTE}
+
+
 def write_csvs(model: ReportModel, out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     tables: list[tuple[str, Sequence[str], Sequence[Mapping[str, Any]]]] = [
         ("timeline.csv", TIMELINE_COLUMNS, model.timeline),
         ("ai_queries.csv", AI_QUERY_COLUMNS, model.ai_queries),
+        ("questions.csv", QUESTION_COLUMNS, [_excel_question(q) for q in model.questions]),
         ("findings.csv", FINDINGS_COLUMNS, _findings_rows(model)),
         ("attributions.csv", ATTRIBUTION_COLUMNS, model.attribution),
         ("file_lifecycle.csv", FINDING_COLUMNS, model.file_lifecycle),

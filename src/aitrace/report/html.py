@@ -39,7 +39,13 @@ def _chapters(doc: Document) -> list[dict[str, Any]]:
             chapters.append({"heading": block, "blocks": []})
         elif isinstance(block, Heading):
             chapters[-1]["blocks"].append(
-                {"kind": "heading", "level": block.level + 1, "number": block.number, "text": block.text, "anchor": block.anchor}
+                {
+                    "kind": "heading",
+                    "level": block.level + 1,
+                    "number": block.number,
+                    "text": block.text,
+                    "anchor": block.anchor,
+                }
             )
         elif isinstance(block, Para):
             chapters[-1]["blocks"].append({"kind": "para", "text": block.text})
@@ -63,12 +69,16 @@ def render_html_string(model: ReportModel) -> str:
     if lang not in SUPPORTED_LANGS:
         lang = DEFAULT_LANG
     doc = build_document(model, TIMELINE_LIMIT_HTML)
-    return environment().get_template(TEMPLATE_NAME).render(
-        lang=lang,
-        doc=doc,
-        toc_title=t("toc.title", lang),
-        toc=doc.toc(),
-        chapters=_chapters(doc),
+    return (
+        environment()
+        .get_template(TEMPLATE_NAME)
+        .render(
+            lang=lang,
+            doc=doc,
+            toc_title=t("toc.title", lang),
+            toc=doc.toc(),
+            chapters=_chapters(doc),
+        )
     )
 
 

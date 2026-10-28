@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ t("report.title") }} - {{ m.case.number }}</title>
+<style>
+:root {
+  --font: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans Mono", monospace;
+  --ink: #1b2330;
+  --ink-soft: #566176;
+  --paper: #fbfaf7;
+  --card: #ffffff;
+  --line: #d9dde5;
+  --accent: #1f4e79;
+  --accent-soft: #e6eef6;
+  --warn: #8a5a00;
+  --warn-soft: #fbf0d9;
+  --danger: #8f1d2c;
+  --danger-soft: #f8e3e6;
+  --ok: #1d6b45;
+  --ok-soft: #e0f2e8;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --r: 6px;
+  --fs-xs: 0.75rem;
+  --fs-s: 0.8125rem;
+  --fs-m: 0.9375rem;
+  --fs-l: 1.25rem;
+  --fs-xl: 1.75rem;
+  --toc-w: 15rem;
+  --table-min: 44rem;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: var(--s5); }
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: var(--fs-m);
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--paper);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.layout { display: grid; grid-template-columns: var(--toc-w) minmax(0, 1fr); gap: var(--s6); max-width: 82rem; margin: 0 auto; padding: var(--s5); }
+nav.toc { position: sticky; top: var(--s5); align-self: start; max-height: calc(100vh - 3rem); overflow-y: auto; padding: var(--s4); background: var(--card); border: 1px solid var(--line); border-radius: var(--r); }
+nav.toc h2 { margin: 0 0 var(--s3); font-size: var(--fs-s); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+nav.toc ol { margin: 0; padding-left: var(--s5); }
+nav.toc li { margin: var(--s1) 0; font-size: var(--fs-s); }
+nav.toc a { color: var(--ink); text-decoration: none; }
+nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+main { min-width: 0; }
+header.cover { padding: var(--s5) 0 var(--s4); border-bottom: 3px solid var(--accent); margin-bottom: var(--s5); }
+header.cover h1 { margin: 0 0 var(--s2); font-size: var(--fs-xl); line-height: 1.25; }
+header.cover p { margin: 0; color: var(--ink-soft); }
+.notice { display: inline-block; margin-top: var(--s3); padding: var(--s1) var(--s3); border-radius: var(--r); background: var(--danger-soft); color: var(--danger); font-size: var(--fs-s); font-weight: 600; }
+section { min-width: 0; margin-bottom: var(--s6); padding: var(--s5); background: var(--card); border: 1px solid var(--line); border-radius: var(--r); }
+section > h2 { margin: 0 0 var(--s4); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); font-size: var(--fs-l); color: var(--accent); }
+section > h2 .num { color: var(--ink-soft); font-variant-numeric: tabular-nums; margin-right: var(--s2); }
+h3 { margin: var(--s5) 0 var(--s2); font-size: var(--fs-m); }
+p { margin: 0 0 var(--s3); }
+ul { margin: 0 0 var(--s3); padding-left: var(--s5); }
+.table-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 var(--s4); border: 1px solid var(--line); border-radius: var(--r); }
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+table.data { table-layout: fixed; min-width: var(--table-min); }
+th, td { padding: var(--s2) var(--s3); text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); word-break: keep-all; overflow-wrap: break-word; }
+thead th { background: var(--accent-soft); font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
+td > div + div { margin-top: var(--s1); }
+table.kv th { width: 12rem; white-space: normal; background: var(--paper); }
+td.id, td.kv-id, .mono, pre { font-family: var(--mono); font-size: var(--fs-xs); }
+td.id, td.kv-id { word-break: break-all; overflow-wrap: anywhere; }
+td.ts { font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
+pre { margin: var(--s2) 0 0; padding: var(--s3); white-space: pre-wrap; background: var(--paper); border: 1px solid var(--line); border-radius: var(--r); }
+details { margin: var(--s1) 0; }
+details > summary { cursor: pointer; color: var(--accent); }
+.badge { display: inline-block; padding: 0 var(--s2); border-radius: var(--r); font-size: var(--fs-s); font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.badge.high, .badge.mismatch { background: var(--danger-soft); color: var(--danger); }
+.badge.medium, .badge.unverified { background: var(--warn-soft); color: var(--warn); }
+.badge.match, .badge.low, .badge.info { background: var(--ok-soft); color: var(--ok); }
+.empty { color: var(--ink-soft); font-style: italic; }
+.note { padding: var(--s2) var(--s3); background: var(--warn-soft); border-radius: var(--r); font-size: var(--fs-s); }
+.q { margin-bottom: var(--s4); }
+.q h3 { margin-top: 0; }
+.sign td { height: 4rem; }
+@media (max-width: 60rem) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: var(--s4); padding: var(--s3); }
+  nav.toc { position: static; max-height: none; }
+  section { padding: var(--s4); }
+  header.cover h1 { font-size: var(--fs-l); }
+  table.kv th { width: 8rem; }
+}
+@page { size: A4; margin: 15mm; }
+@media print {
+  body { background: #fff; font-size: 10pt; }
+  .layout { display: block; max-width: none; padding: 0; }
+  nav.toc { position: static; max-height: none; border: 0; padding: 0 0 var(--s4); }
+  section { border: 0; padding: 0; break-inside: auto; }
+  section > h2 { break-after: avoid; }
+  .table-wrap { overflow: visible; border: 0; }
+  table { font-size: 8.5pt; }
+  table.data { min-width: 0; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  details > summary { display: none; }
+  details > *:not(summary) { display: block; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="{{ x('toc') }}">
+<h2>{{ x('toc') }}</h2>
+<ol>
+{% for key in sections %}
+<li><a href="#sec-{{ key }}">{{ t("section." ~ key) }}</a></li>
+{% endfor %}
+</ol>
+</nav>
+<main>
+<header class="cover">
+<h1>{{ t("report.title") }}</h1>
+<p>{{ m.case.number }}{% if m.case.name %} &middot; {{ m.case.name }}{% endif %}</p>
+<p>{{ x('created') }}: {{ m.run.get("created_utc", "") }}</p>
+<span class="notice">{{ m.case.handling_notice }}</span>
+</header>
+
+{% macro longtext(value) %}
+{% set s = value | scalar %}
+{% if s | length > long_chars or "\n" in s %}
+<details><summary>{{ s[:80] }}&hellip;</summary><pre>{{ s }}</pre></details>
+{% else %}
+{{ s }}
+{% endif %}
+{% endmacro %}
+
+{% macro badge(cls, label) %}<span class="badge {{ cls }}">{{ label }}</span>{% endmacro %}
+
+{% macro empty() %}<p class="empty">{{ t("summary.none") }}</p>{% endmacro %}
+
+{% macro kv(pairs, extra_label="", extra_items=[]) %}
+<div class="table-wrap"><table class="kv"><tbody>
+{% for label, value in pairs %}
+<tr><th>{{ label }}</th>{% if label in id_labels %}<td class="kv-id">{{ value }}</td>{% else %}<td>{{ longtext(value) }}</td>{% endif %}</tr>
+{% endfor %}
+{% if extra_items %}
+<tr><th>{{ extra_label }}</th><td>{% for item in extra_items %}<div>{{ item }}</div>{% endfor %}</td></tr>
+{% endif %}
+</tbody></table></div>
+{% endmacro %}
+
+{% macro data_table(spec) %}
+{% if spec.rows %}
+<div class="table-wrap"><table class="data">
+<colgroup>{% for c in spec.cols %}<col style="width: {{ c.pct }}%">{% endfor %}</colgroup>
+<thead><tr>{% for c in spec.cols %}<th>{{ c.label }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in spec.rows %}
+<tr>
+{% for cell in row %}
+<td{% if cell.cls %} class="{{ cell.cls }}"{% endif %}>
+{% if cell.badge %}{{ badge(cell.badge, cell["items"] | join(", ")) }}{% else %}{% for item in cell["items"] %}<div>{% if cell.plain %}{{ item }}{% else %}{{ longtext(item) }}{% endif %}</div>{% endfor %}{% endif %}
+</td>
+{% endfor %}
+</tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}
+{{ empty() }}
+{% endif %}
+{% endmacro %}
+
+{% for key in sections %}
+<section id="sec-{{ key }}">
+<h2><span class="num">{{ loop.index }}</span>{{ t("section." ~ key) }}</h2>
+{% if key == "case" %}
+{{ kv(case_pairs) }}
+
+{% elif key == "evidence" %}
+{% for pairs in evidence_pairs %}
+{{ kv(pairs, t("col.limitations"), evidence_limitations[loop.index0]) }}
+{% else %}
+{{ empty() }}
+{% endfor %}
+
+{% elif key == "tools" %}
+{{ kv(tools_pairs) }}
+
+{% elif key == "methodology" %}
+{% for p in m.methodology.paragraphs %}
+<p>{{ p }}</p>
+{% endfor %}
+{{ kv(methodology_pairs) }}
+
+{% elif key == "summary" %}
+{% for q in m.summary %}
+<div class="q" id="sum-{{ q.id | lower }}">
+<h3>{{ q.question }}</h3>
+<ul>
+{% for b in q.bullets %}
+<li>{{ b }}</li>
+{% endfor %}
+</ul>
+</div>
+{% endfor %}
+
+{% elif key in ("ai_tools", "ai_queries", "file_lifecycle", "exfil", "attribution", "exports") %}
+{{ data_table(tables[key]) }}
+
+{% elif key == "timeline" %}
+{% if timeline_note %}<p class="note">{{ timeline_note }}</p>{% endif %}
+{{ data_table(tables.timeline) }}
+
+{% elif key == "coverage" %}
+<h3>{{ t("coverage.plugin_runs") }}</h3>
+{{ data_table(tables.plugin_runs) }}
+<h3>{{ t("coverage.parse_warnings") }}</h3>
+{{ data_table(tables.parse_warnings) }}
+<h3>{{ t("coverage.not_decoded") }}</h3>
+{{ data_table(tables.not_decoded) }}
+<h3>{{ t("coverage.findings") }}</h3>
+{{ data_table(tables.coverage_findings) }}
+
+{% elif key == "limitations" %}
+{% if m.limitations %}
+<ul>
+{% for l in m.limitations %}
+<li>{{ l }}</li>
+{% endfor %}
+</ul>
+{% else %}
+{{ empty() }}
+{% endif %}
+
+{% elif key == "custody" %}
+{{ data_table(tables.custody) }}
+
+{% elif key == "signature" %}
+<div class="table-wrap"><table class="sign">
+<thead><tr><th>{{ t("signature.examiner") }}</th><th>{{ t("label.organisation") }}</th><th>{{ t("signature.signature") }}</th><th>{{ t("signature.date") }}</th></tr></thead>
+<tbody><tr><td>{{ m.signature.examiner }}</td><td>{{ m.signature.organisation }}</td><td>{{ m.signature.signature }}</td><td>{{ m.signature.date }}</td></tr></tbody>
+</table></div>
+{% endif %}
+</section>
+{% endfor %}
+</main>
+</div>
+</body>
+</html>

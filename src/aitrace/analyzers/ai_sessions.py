@@ -26,6 +26,7 @@ SESSION_GAP = timedelta(minutes=30)
 TITLE_CHARS = 80
 INVENTORY_CONFIDENCE = 1.0
 QUERY_CONFIDENCE = 0.6
+MAX_COVERAGE_IDS = 50
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 _WEB_KINDS = frozenset({ArtifactKind.BROWSER_VISIT, ArtifactKind.BROWSER_DOWNLOAD, ArtifactKind.DOWNLOAD_ORIGIN})
@@ -59,6 +60,42 @@ class _Message:
     session_id: str | None
     ts: datetime | None
     event_ids: tuple[str, ...]
+
+
+def _malformed(artifact: Artifact) -> bool:
+    """True when the artifact data violates the Appendix A.10 shape this analyzer relies on."""
+    data = artifact.data
+    for name in ("tool", "ai_service", "ai_tool", "provider"):
+        value = data.get(name)
+        if value is not None and not isinstance(value, str):
+            return True
+    if artifact.kind is ArtifactKind.AI_CHAT_MESSAGE:
+        session_id = data.get("session_id")
+        return (
+            not isinstance(data.get("role"), str)
+            or not isinstance(data.get("text"), str)
+            or not (session_id is None or isinstance(session_id, str))
+        )
+    return False
+
+
+def _coverage_finding(analyzer: str, artifact_ids: list[str]) -> Finding:
+    ids = sorted(artifact_ids)[:MAX_COVERAGE_IDS]
+    count = len(artifact_ids)
+    return Finding(
+        id=make_id("finding", "coverage", analyzer, "malformed"),
+        category=FindingCategory.COVERAGE,
+        severity=Severity.LOW,
+        title=f"{analyzer}: skipped {count} malformed artifacts",
+        narrative=f"{count} artifact(s) violated the expected data shape and were excluded from {analyzer} analysis.",
+        artifact_ids=tuple(ids),
+        event_ids=(),
+        confidence=1.0,
+        band=band_for(1.0),
+        rule_id="COVERAGE-MALFORMED",
+        limitations=("Skipped artifacts contributed nothing to this analyzer's results.",),
+        data={"analyzer": analyzer, "skipped_count": count, "artifact_ids": ids},
+    )
 
 
 def _tool_of(artifact: Artifact) -> str | None:
@@ -212,7 +249,19 @@ class AiSessionsAnalyzer:
     version = "1.0"
 
     def run(self, store: CaseStore, tz: str) -> Iterator[Finding | Attribution]:
-        tagged = [(tool, a) for a in store.artifacts(kinds=_SOURCE_KINDS) if (tool := _tool_of(a))]
+        tagged: list[tuple[str, Artifact]] = []
+        skipped: list[str] = []
+        for a in store.artifacts(kinds=_SOURCE_KINDS):
+            if _malformed(a):
+                skipped.append(a.id)
+            elif tool := _tool_of(a):
+                tagged.append((tool, a))
+        yield from self._analyze(tagged, store)
+        if skipped:
+            yield _coverage_finding(self.name, skipped)
+
+    @staticmethod
+    def _analyze(tagged: list[tuple[str, Artifact]], store: CaseStore) -> Iterator[Finding]:
         if not tagged:
             return
 

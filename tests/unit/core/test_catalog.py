@@ -95,11 +95,26 @@ def test_curl_form_upload_destination_from_url() -> None:
     assert "transfer.example.net" in (hits["TR-CURL-UP"] or "")
 
 
-def test_rclone_has_cloud_tags_and_no_destination() -> None:
+def test_rclone_has_cloud_tags_and_remote_destination() -> None:
     matches = match_command(r"rclone copy C:\Users\kim\work gdrive:backup")
     rule, dest = next((r, d) for r, d in matches if r.rule_id == "TR-RCLONE")
     assert rule.tags == ("transfer", "cloud_cli")
-    assert dest is None
+    assert dest == "gdrive:backup"
+
+
+def test_rclone_remote_ignores_windows_drive_and_trailing_flags() -> None:
+    hits = _rules(r"rclone sync D:\data s3remote:bucket/x --progress")
+    assert hits["TR-RCLONE"] == "s3remote:bucket/x"
+
+
+def test_aws_s3_destination_is_s3_url() -> None:
+    hits = _rules("aws s3 cp ./a.zip s3://corp-bucket/in/a.zip")
+    assert hits["TR-AWS-S3"] == "s3://corp-bucket/in/a.zip"
+
+
+def test_gsutil_destination_is_gs_url() -> None:
+    hits = _rules("gsutil cp ./a.zip gs://corp-bucket/in/")
+    assert hits["TR-GSUTIL"] == "gs://corp-bucket/in/"
 
 
 def test_host_at_fallback() -> None:

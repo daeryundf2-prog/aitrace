@@ -31,6 +31,7 @@ from aitrace.db.store import CaseStore
 from aitrace.plugins.base import PluginRunResult
 from aitrace.report.i18n import STRINGS, t
 from aitrace.report.model import (
+    COLUMNS,
     SECTION_KEYS,
     TIMELINE_COLUMNS,
     TIMELINE_LIMIT_HTML,
@@ -325,19 +326,89 @@ def test_ai_queries_full_text_and_ordering(full_store: CaseStore) -> None:
     assert rows[0]["session"] == "s1"
 
 
-def test_ai_tools_rows_include_credentials_with_provider(full_store: CaseStore) -> None:
-    rows = _build(full_store).ai_tools
-    by_kind = {r["kind"]: r for r in rows}
-    assert set(by_kind) == {"usage", "presence", "credential"}
-    assert by_kind["credential"]["provider"] == "Anthropic"
-    assert by_kind["credential"]["detail"] == "sk-ant-****"
-    assert by_kind["usage"]["tool"] == "Claude Code"
+def test_ai_tools_rows_come_from_usage_inventory(tmp_path: Path) -> None:
+    store = CaseStore(tmp_path / "inv.db")
+    store.init_case(_case())
+    inventory = [
+        {"tool": "OpenAI", "kind": "credential", "users": ["kim"], "first_seen": None, "last_seen": None,
+         "evidence_count": 1, "artifact_ids": ["a5"]},
+        {"tool": "Ollama", "kind": "local_llm", "users": ["kim"], "first_seen": "2026-03-01T09:00:00Z",
+         "last_seen": "2026-03-02T09:00:00Z", "evidence_count": 2, "artifact_ids": ["a4", "a6"]},
+        {"tool": "Claude Code", "kind": "cli", "users": ["kim"], "first_seen": "2026-03-01T10:00:00Z",
+         "last_seen": "2026-03-01T11:00:00Z", "evidence_count": 3, "artifact_ids": ["a3"]},
+        {"tool": "Claude", "kind": "web", "users": ["kim"], "first_seen": "2026-03-01T08:00:00Z",
+         "last_seen": "2026-03-01T08:30:00Z", "evidence_count": 1, "artifact_ids": ["a2"]},
+        {"tool": "ChatGPT", "kind": "web", "users": ["kim"], "first_seen": "2026-03-01T07:00:00Z",
+         "last_seen": "2026-03-01T07:30:00Z", "evidence_count": 1, "artifact_ids": ["a1"]},
+    ]
+    store.add_results(
+        [
+            Finding(
+                id="f-usage",
+                category=FindingCategory.AI_TOOL_USAGE,
+                severity=Severity.INFO,
+                title="AI tools observed: 5",
+                narrative="n",
+                artifact_ids=(),
+                event_ids=(),
+                confidence=0.9,
+                band=ConfidenceBand.STRONG,
+                rule_id=None,
+                limitations=(),
+                data={"providers": [], "inventory": inventory},
+            )
+        ]
+    )
+    store.finalize()
+    rows = _build(store).ai_tools
+    assert [(r["kind"], r["tool"]) for r in rows] == [
+        ("cli", "Claude Code"),
+        ("credential", "OpenAI"),
+        ("local_llm", "Ollama"),
+        ("web", "ChatGPT"),
+        ("web", "Claude"),
+    ]
+    by_tool = {r["tool"]: r for r in rows}
+    assert by_tool["Ollama"]["first_seen"] == "2026-03-01T09:00:00Z"
+    assert by_tool["Ollama"]["last_seen"] == "2026-03-02T09:00:00Z"
+    assert by_tool["Claude Code"]["evidence_count"] == 3
+    assert by_tool["ChatGPT"]["artifact_ids"] == ["a1"]
+    assert by_tool["OpenAI"]["provider"] == "OpenAI"
+    assert by_tool["Claude"]["provider"] is None
+
+
+def test_ai_tools_credential_tool_falls_back_to_provider(tmp_path: Path) -> None:
+    store = CaseStore(tmp_path / "cred.db")
+    store.init_case(_case())
+    entry = {"tool": None, "provider": "Anthropic", "kind": "credential", "users": [], "evidence_count": 1}
+    store.add_results(
+        [
+            Finding(
+                id="f-usage",
+                category=FindingCategory.AI_TOOL_USAGE,
+                severity=Severity.INFO,
+                title="t",
+                narrative="n",
+                artifact_ids=(),
+                event_ids=(),
+                confidence=0.9,
+                band=ConfidenceBand.STRONG,
+                rule_id=None,
+                limitations=(),
+                data={"inventory": [entry]},
+            )
+        ]
+    )
+    store.finalize()
+    (row,) = _build(store).ai_tools
+    assert row["tool"] == "Anthropic"
+    assert row["provider"] == "Anthropic"
 
 
 def test_timeline_order_columns_and_render(full_store: CaseStore) -> None:
     model = _build(full_store)
     assert len(model.timeline) == 5
-    assert all(tuple(row) == TIMELINE_COLUMNS for row in model.timeline)
+    assert all(tuple(row)[: len(TIMELINE_COLUMNS)] == TIMELINE_COLUMNS for row in model.timeline)
     stamps = [r["ts_utc"] for r in model.timeline]
     assert stamps[-1] is None
     assert stamps[:-1] == sorted(s for s in stamps if s is not None)
@@ -407,3 +478,132 @@ def test_i18n_tables_cover_the_same_keys() -> None:
     assert t("section.timeline", "xx") == "Super-timeline"
     with pytest.raises(KeyError):
         t("no.such.key", "en")
+
+
+def _display_store(tmp_path: Path) -> CaseStore:
+    store = CaseStore(tmp_path / "display.db")
+    store.init_case(_case())
+    common = {"narrative": "n", "artifact_ids": (), "event_ids": (), "confidence": 0.7, "band": ConfidenceBand.MODERATE}
+    inventory = [
+        {"tool": "Claude Code", "kind": "cli", "users": ["kim"], "first_seen": "2026-03-01T10:00:00Z",
+         "last_seen": "2026-03-01T11:00:00Z", "evidence_count": 3, "artifact_ids": []},
+    ]
+    store.add_results(
+        [
+            Finding(id="u", category=FindingCategory.AI_TOOL_USAGE, severity=Severity.INFO,
+                    title="AI tools observed: 1", rule_id=None, limitations=(),
+                    data={"inventory": inventory}, **common),
+            Finding(id="l", category=FindingCategory.FILE_LIFECYCLE, severity=Severity.MEDIUM,
+                    title="File lifecycle: /Users/kim/a.md", rule_id="FILE-LIFECYCLE",
+                    limitations=("USB insertion does not prove file copy",),
+                    data={"path": "/Users/kim/a.md",
+                          "lifecycle": [
+                              {"ts": "2026-03-01T11:00:00Z", "event": "deleted", "artifact_id": "x"},
+                              {"ts": "2026-03-01T09:00:00Z", "event": "created", "artifact_id": "x"},
+                          ],
+                          "links": [{"kind": "agent_write", "artifact_id": "x", "confidence": 0.9}]},
+                    **common),
+            Finding(id="x1", category=FindingCategory.EXFIL_CHANNEL, severity=Severity.HIGH,
+                    title="Exfiltration channel: TR-SCP to 203.0.113.10", rule_id="TR-SCP", limitations=(),
+                    data={"channel": "TR-SCP to 203.0.113.10", "destination": "203.0.113.10",
+                          "source_paths": ["C:\\data\\secret.zip"], "actor": "human",
+                          "time": "2026-03-01T09:30:00Z", "user": "kim"}, **common),
+            Finding(id="x2", category=FindingCategory.EXFIL_CHANNEL, severity=Severity.HIGH,
+                    title="Exfiltration channel: TR-SCP to 203.0.113.10", rule_id="TR-SCP", limitations=(),
+                    data={"channel": "TR-SCP to 203.0.113.10", "destination": "203.0.113.10",
+                          "source_paths": [], "actor": "human", "time": None, "user": "kim"}, **common),
+            Attribution(id="at", subject="/a.md", subject_artifact_ids=(), verdict=Verdict.UNDETERMINED,
+                        confidence=0.4, band=ConfidenceBand.WEAK,
+                        signals=(Signal(type=SignalType.TIME_PROXIMITY, direction="ai", weight=0.3,
+                                        artifact_ids=(), note="n"),),
+                        rationale="r", limitations=("temporal proximity alone does not prove causation",)),
+        ]
+    )
+    store.finalize()
+    return store
+
+
+def test_display_fields_ko(tmp_path: Path) -> None:
+    model = _build(_display_store(tmp_path), lang="ko")
+    tool = model.ai_tools[0]
+    assert tool["kind_label"] == "CLI 에이전트"
+    assert tool["first_seen_local"] == "2026-03-01 19:00:00 (+09:00)"
+    life = model.file_lifecycle[0]
+    assert life["display_title"] == "파일 이력: /Users/kim/a.md"
+    assert life["display_steps"] == ["2026-03-01 18:00:00 (+09:00) 생성", "2026-03-01 20:00:00 (+09:00) 삭제"]
+    assert life["severity_label"] == "중간"
+    assert life["limitations_display"] == ["USB 연결 기록은 파일 복사를 증명하지 않는다."]
+    ex = model.exfil[0]
+    assert ex["display_channel"] == "scp 전송 \u2192 203.0.113.10"
+    assert ex["severity_label"] == "높음" and ex["actor_label"] == "사람"
+    assert ex["source_name"] == "secret.zip" and ex["ts_local"] == "2026-03-01 18:30:00 (+09:00)"
+    att = model.attribution[0]
+    assert att["verdict_label"] == "판단 불가" and att["band_label"] == "약함"
+    assert att["limitations_display"] == ["시간적 근접성만으로는 인과관계를 증명할 수 없다."]
+    assert att["signals_summary"] == "시간적 근접 (AI)"
+    assert all(r["category_label"] and r["actor_label"] for r in model.timeline)
+    assert "시스템 시계 오차로 시각이 실제와 다를 수 있다." in model.limitations
+
+
+def test_display_fields_en_and_label_tables() -> None:
+    expected_ko = {
+        "kind.local_llm": "로컬 LLM", "role.tool": "도구 호출", "actor.unknown": "미상",
+        "category.remote_access": "원격 접속", "category.device": "장치 연결", "severity.info": "정보",
+        "verdict.ai_assisted": "AI 보조", "channel.TR-PS-COPY": "네트워크 공유 복사",
+        "channel.rdp": "원격 데스크톱(RDP)", "channel.agent": "AI 에이전트 실행",
+    }
+    for key, text in expected_ko.items():
+        assert t(key, "ko") == text
+        assert t(key, "en")
+    assert t("kind.web", "en") == "Web service"
+    assert t("label.case_id", "ko") == "사건 ID"
+
+
+def test_display_en_rows(tmp_path: Path) -> None:
+    model = _build(_display_store(tmp_path), lang="en")
+    assert model.file_lifecycle[0]["display_title"] == "File lifecycle: /Users/kim/a.md"
+    assert model.exfil[0]["display_channel"] == "scp transfer \u2192 203.0.113.10"
+    assert model.exfil[1]["ts_local"] is None
+    assert model.ai_tools[0]["kind_label"] == "CLI agent"
+
+
+def test_chronological_steps_and_columns_exist_in_rows(tmp_path: Path) -> None:
+    model = _build(_display_store(tmp_path), lang="ko")
+    steps = model.file_lifecycle[0]["display_steps"]
+    assert steps == sorted(steps)
+    for section, spec in COLUMNS.items():
+        rows = getattr(model, section)
+        if not rows:  # exports / ai_queries / timeline are covered by the full_store test
+            continue
+        for field_key, label_key, weight in spec:
+            assert all(field_key in row for row in rows), (section, field_key)
+            assert t(label_key, "ko") and t(label_key, "en") and weight > 0
+    assert all("artifact_id" not in key and "id" != key for spec in COLUMNS.values() for key, _, _ in spec)
+
+
+def test_columns_exports_and_full_store(full_store: CaseStore) -> None:
+    model = _build(full_store, lang="ko")
+    for field_key, _, _ in COLUMNS["exports"]:
+        assert field_key in model.exports[0]
+    for section in ("ai_tools", "ai_queries", "file_lifecycle", "attribution", "timeline"):
+        for field_key, _, _ in COLUMNS[section]:
+            assert all(field_key in row for row in getattr(model, section)), (section, field_key)
+
+
+def test_summary_bullets_have_no_duplicates_and_are_localized(tmp_path: Path) -> None:
+    model = _build(_display_store(tmp_path), lang="ko")
+    for question in model.summary:
+        assert len(question["bullets"]) == len(set(question["bullets"]))
+    assert model.summary[3]["bullets"].count("[높음] 반출 경로: scp 전송") == 1
+    assert "[정보] AI 도구 1종 관찰" in model.summary[0]["bullets"]
+    assert "[중간] 파일 이력: /Users/kim/a.md" in model.summary[2]["bullets"]
+
+
+def test_key_value_pairs(full_store: CaseStore) -> None:
+    model = _build(full_store, lang="ko")
+    case = dict(model.case_pairs())
+    assert case["사건 ID"] == model.case["id"]
+    assert "비고" not in case and "lang" not in " ".join(case)
+    assert dict(model.tools_pairs())["aitrace 버전"] == "0.1.0"
+    assert dict(model.evidence_pairs()[0])["검증 결과"] == "일치"
+    assert "적용 기준" in dict(model.methodology_pairs())

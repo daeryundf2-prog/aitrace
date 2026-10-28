@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 AI_WINDOW = timedelta(minutes=60)
 TRANSFER_TAG = "transfer"
 USB_LIMITATION = "USB insertion does not prove file copy"
+MAX_COVERAGE_IDS = 50
 CHANNEL_KINDS = (
     ArtifactKind.FILE_TRANSFER,
     ArtifactKind.SHELL_COMMAND,
@@ -77,6 +79,74 @@ def _command_paths(command: str) -> list[str]:
         if "/" in token or "." in token:
             paths.append(token)
     return paths
+
+
+def _opt_str(value: Any) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _malformed(art: Artifact) -> bool:
+    """True when the artifact data violates the Appendix A.10 shape this analyzer relies on."""
+    data = art.data
+    kind = art.kind
+    if kind is ArtifactKind.FILE_TRANSFER:
+        local_paths = data.get("local_paths")
+        return (
+            not isinstance(data.get("channel"), str)
+            or not _opt_str(data.get("destination"))
+            or not (local_paths is None or isinstance(local_paths, list))
+        )
+    if kind is ArtifactKind.SHELL_COMMAND:
+        return not isinstance(data.get("command"), str)
+    if kind is ArtifactKind.AI_TOOL_CALL:
+        raw_input = data.get("input")
+        return (
+            not _opt_str(data.get("command"))
+            or not _opt_str(data.get("file_path"))
+            or not (raw_input is None or isinstance(raw_input, dict))
+        )
+    if kind is ArtifactKind.REMOTE_SESSION:
+        return not isinstance(data.get("protocol"), str) or not _opt_str(data.get("remote_host"))
+    if kind is ArtifactKind.USB_DEVICE:
+        return not _opt_str(data.get("vendor")) or not _opt_str(data.get("product"))
+    if kind is ArtifactKind.CLOUD_SYNC:
+        return not isinstance(data.get("service"), str) or not _opt_str(data.get("item_path"))
+    if kind is ArtifactKind.NETWORK_USAGE:
+        sent = data.get("bytes_sent")
+        return not isinstance(data.get("program"), str) or isinstance(sent, bool) or not isinstance(sent, int)
+    return False
+
+
+def _coverage_finding(analyzer: str, artifact_ids: list[str]) -> Finding:
+    ids = sorted(artifact_ids)[:MAX_COVERAGE_IDS]
+    count = len(artifact_ids)
+    return Finding(
+        id=make_id("finding", "coverage", analyzer, "malformed"),
+        category=FindingCategory.COVERAGE,
+        severity=Severity.LOW,
+        title=f"{analyzer}: skipped {count} malformed artifacts",
+        narrative=f"{count} artifact(s) violated the expected data shape and were excluded from {analyzer} analysis.",
+        artifact_ids=tuple(ids),
+        event_ids=(),
+        confidence=1.0,
+        band=band_for(1.0),
+        rule_id="COVERAGE-MALFORMED",
+        limitations=("Skipped artifacts contributed nothing to this analyzer's results.",),
+        data={"analyzer": analyzer, "skipped_count": count, "artifact_ids": ids},
+    )
+
+
+_SEVERITY_RANK = {Severity.INFO: 0, Severity.LOW: 1, Severity.MEDIUM: 2, Severity.HIGH: 3}
+
+
+def _merge(first: Finding, second: Finding) -> Finding:
+    """Fold two findings for the same channel into one, keeping the stronger one's verdict."""
+    base = second if _SEVERITY_RANK[second.severity] > _SEVERITY_RANK[first.severity] else first
+    return replace(
+        base,
+        artifact_ids=tuple(dict.fromkeys((*first.artifact_ids, *second.artifact_ids))),
+        event_ids=tuple(dict.fromkeys((*first.event_ids, *second.event_ids))),
+    )
 
 
 class _Index:
@@ -253,11 +323,20 @@ class _Index:
         elif kind is ArtifactKind.CLOUD_SYNC:
             service = _str(data.get("service")) or "unknown service"
             item = _str(data.get("item_path"))
+            remote = _str(data.get("account"))
+            extra = data.get("extra")
+            tool = _str(extra.get("tool")) if isinstance(extra, dict) else None
+            if remote and tool:
+                channel = f"{tool} remote {remote} ({service})"
+            elif remote:
+                channel = f"cloud sync: {remote} ({service})"
+            else:
+                channel = f"cloud sync: {service}"
             yield self.finding(
                 art,
                 rule_id="EXFIL-CLOUD-SYNC",
-                channel=f"cloud sync: {service}",
-                destination=service,
+                channel=channel,
+                destination=f"{remote} ({service})" if remote else service,
                 sources=[item] if item else [],
                 actor=actor,
             )
@@ -282,8 +361,22 @@ class ExfilChannelsAnalyzer:
 
     def run(self, store: CaseStore, tz: str) -> Iterator[Finding | Attribution]:
         index = _Index(store)
+        skipped: list[str] = []
+        merged: dict[tuple[str | None, str, str | None, str | None], Finding] = {}
         for art in store.artifacts(kinds=CHANNEL_KINDS):
-            yield from index.findings_for(art)
+            if _malformed(art):
+                skipped.append(art.id)
+                continue
+            for finding in index.findings_for(art):
+                # A FILE_TRANSFER derived from a command carries the command rule id as its channel, so its
+                # "EXFIL-<rule>" id must fold into the SHELL_COMMAND finding for the same rule.
+                rule_key = (finding.rule_id or "").removeprefix("EXFIL-")
+                key = (rule_key, finding.data["channel"], finding.data["destination"], finding.data["user"])
+                prior = merged.get(key)
+                merged[key] = finding if prior is None else _merge(prior, finding)
+        yield from merged.values()
+        if skipped:
+            yield _coverage_finding(self.name, skipped)
 
 
 ANALYZER = ExfilChannelsAnalyzer()

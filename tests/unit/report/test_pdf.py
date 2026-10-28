@@ -1,236 +1,83 @@
 from __future__ import annotations
 
-import re
+import importlib.util
 from pathlib import Path
-from typing import Any
 
 import pypdfium2 as pdfium
 
-from aitrace.report.i18n import STRINGS
-from aitrace.report.model import COLUMNS, SECTION_KEYS, ReportModel
 from aitrace.report.pdf import render_pdf
 
-CASE_NUMBER = "AI-2026-001"
-APPENDIX_E_KO_HEADINGS = [STRINGS["ko"][f"section.{key}"] for key in SECTION_KEYS if key != "run"]
+_SPEC = importlib.util.spec_from_file_location("report_sample", Path(__file__).with_name("sample.py"))
+assert _SPEC is not None and _SPEC.loader is not None
+sample = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(sample)
 
 
-def _model(queries: list[dict[str, Any]] | None = None) -> ReportModel:
-    return ReportModel(
-        case={
-            "id": "case-1",
-            "name": "김철수 사건",
-            "number": CASE_NUMBER,
-            "examiner": "홍길동",
-            "organisation": "포렌식 연구소",
-            "timezone": "Asia/Seoul",
-            "lang": "ko",
-            "tool_version": "0.1.0",
-            "notes": "비고 테스트",
-            "handling_notice": "대외비 - 개인정보 포함 / Confidential - contains personal data",
-        },
-        evidence=[
-            {
-                "id": "ev-1",
-                "path": "/images/win.E01",
-                "kind": "e01",
-                "size": 10,
-                "acquisition_hashes": {"md5": "aa"},
-                "media_sha256": "bb",
-                "verification_label": "일치",
-            }
-        ],
-        tools={"aitrace_version": "0.1.0", "python": "3.12", "dissect": {"dissect.target": "3.25.1"}},
-        methodology={
-            "paragraphs": ["증거물은 읽기 전용으로 열람하였다."],
-            "standards_intro": "적용 기준",
-            "standards": ["ISO/IEC 27037"],
-            "tool_validation": "도구 검증",
-        },
-        summary=[{"id": "Q1", "question": "Q1", "bullets": ["AI 도구 사용 발견 1건"]}],
-        ai_tools=[],
-        ai_queries=queries or [],
-        file_lifecycle=[],
-        exfil=[],
-        attribution=[],
-        timeline=[],
-        exports=[],
-        coverage={
-            "plugin_runs": [
-                {
-                    "name": "browser",
-                    "version": "1",
-                    "status": "ok",
-                    "records": 3,
-                    "warnings": 0,
-                    "error": None,
-                }
-            ],
-            "parse_warnings": [],
-            "not_decoded": [],
-            "findings": [],
-        },
-        limitations=["한계 테스트"],
-        custody=[{"seq": 1, "actor": "examiner", "action": "open", "detail": "read-only"}],
-        signature={"examiner": "홍길동"},
-        run={},
-    )
+BODY_START = 2
 
 
-def _page_texts(path: Path) -> list[str]:
-    doc = pdfium.PdfDocument(path)
-    try:
-        return [doc[i].get_textpage().get_text_range() for i in range(len(doc))]
-    finally:
-        doc.close()
+def _render(tmp_path: Path, lang: str = "ko", prompt: str = "경쟁사 제안서를 요약해줘") -> tuple[Path, list[str], list[tuple[float, float]]]:
+    path = render_pdf(sample.make_model(lang, prompt=prompt), tmp_path / "report.pdf")
+    pdf = pdfium.PdfDocument(str(path))
+    texts = [page.get_textpage().get_text_range() for page in pdf]
+    sizes = [page.get_size() for page in pdf]
+    return path, texts, sizes
 
 
-def test_renders_korean_report_with_case_number_and_multiple_pages(tmp_path: Path) -> None:
-    out = render_pdf(_model(), tmp_path / "report.pdf")
-
-    pages = _page_texts(out)
-    assert len(pages) >= 3
-    text = "".join(pages)
-    assert "증거" in text
-    assert CASE_NUMBER in text
+def _page_with(texts: list[str], needle: str) -> int:
+    return next(i for i, text in enumerate(texts) if i >= BODY_START and needle in text)
 
 
-def test_no_non_final_page_is_nearly_blank(tmp_path: Path) -> None:
-    out = render_pdf(_model(), tmp_path / "report.pdf")
-
-    doc = pdfium.PdfDocument(out)
-    try:
-        for index in range(len(doc) - 1):
-            histogram = doc[index].render(scale=1).to_pil().convert("L").histogram()
-            white_ratio = sum(histogram[250:]) / sum(histogram)
-            assert white_ratio <= 0.999, f"page {index + 1} is {white_ratio:.4%} white"
-    finally:
-        doc.close()
+def test_cover_toc_and_chapters_are_present(tmp_path: Path) -> None:
+    _, texts, _ = _render(tmp_path)
+    cover = texts[0]
+    for label in ("사건번호", "문서번호", "감정·분석 대상", "의뢰처", "작성자", "작성일", "대외비"):
+        assert label in cover
+    assert "목차" in texts[1]
+    for chapter in sample.KO_CHAPTERS:
+        assert chapter.replace(" ", "") in "".join(texts[1].split()), chapter
+        assert any(chapter.replace(" ", "") in "".join(text.split()) for text in texts[2:]), chapter
 
 
-def test_every_appendix_e_korean_heading_is_extractable(tmp_path: Path) -> None:
-    out = render_pdf(_model(), tmp_path / "report.pdf")
-
-    text = "".join("".join(_page_texts(out)).split())
-    for heading in APPENDIX_E_KO_HEADINGS:
-        assert "".join(heading.split()) in text, heading
+def test_first_chapter_follows_the_contents_page_without_a_blank_page(tmp_path: Path) -> None:
+    _, texts, _ = _render(tmp_path)
+    assert "제1장" in texts[2]
 
 
-def test_table_cell_taller_than_a_page_renders_without_truncation(tmp_path: Path) -> None:
-    unit = "한글 evidence text 증거 "
-    long_text = (unit * 400)[:6000]
-    assert len(long_text) == 6000
-    model = _model()
-    model.ai_queries.append({"tool": "Claude Code", "role_label": "사용자", "text": long_text})
-
-    out = render_pdf(model, tmp_path / "tall.pdf")
-
-    assert out.is_file()
-    doc = pdfium.PdfDocument(out)
-    try:
-        assert len(doc) >= 3
-    finally:
-        doc.close()
-    page_chrome = re.compile(rf"사건번호/Casenumber:{CASE_NUMBER}page\d+/\d+|aitracev[\d.]+-page\d+/\d+")
-    text = page_chrome.sub("", "".join("".join(_page_texts(out)).split()))
-    assert "".join(long_text.split()) in text
+def test_header_and_footer_on_body_pages_only(tmp_path: Path) -> None:
+    _, texts, _ = _render(tmp_path)
+    assert "| 대외비" not in texts[0] and "- 1 /" not in texts[0]
+    assert "문서번호 T-1-01 | 대외비" in texts[2]
+    assert f"- 3 / {len(texts)} -" in texts[2]
 
 
-def test_single_5000_char_message_renders_without_exception(tmp_path: Path) -> None:
-    long_text = "한글" * 2500
-    queries = [{"tool": "Claude Code", "session_id": "s1", "role": "user", "text": long_text}]
-
-    out = render_pdf(_model(queries), tmp_path / "long.pdf")
-
-    assert len(_page_texts(out)) >= 3
-
-
-SHA = "a" * 64
-
-
-def _rich_model() -> ReportModel:
-    model = _model()
-    model.ai_tools.append(
-        {
-            "kind_label": "CLI",
-            "tool": "Claude Code",
-            "users": ["alice"],
-            "first_seen_local": "2026-01-01 09:00:00",
-            "last_seen_local": "2026-01-02 09:00:00",
-            "evidence_count": 3,
-        }
-    )
-    model.ai_queries.append(
-        {
-            "ts_local": "2026-01-01 09:00:00",
-            "tool": "Claude Code",
-            "role_label": "사용자",
-            "text": "민감 파일 정리 방법",
-            "source_name": "history.jsonl",
-        }
-    )
-    model.timeline.append(
-        {
-            "ts_local": "2026-01-01 09:00:00",
-            "category_label": "AI 활동",
-            "actor_label": "사람",
-            "user": "alice",
-            "summary": "프롬프트 입력",
-            "source_path": "/Users/alice/.claude/history.jsonl",
-        }
-    )
-    model.exports.append({"export_path": "export/files/C/a.txt", "size": 5, "sha256": SHA})
-    return model
+def test_timeline_and_annex_one_are_landscape_and_the_rest_portrait(tmp_path: Path) -> None:
+    _, texts, sizes = _render(tmp_path)
+    landscape = {i for i, (w, h) in enumerate(sizes) if w > h}
+    assert _page_with(texts, "제5장 타임라인") in landscape
+    assert _page_with(texts, "별첨1 추출 자료 목록") in landscape
+    for chapter in ("제4장 생성물", "제6장", "제9장 감정", "별첨3"):
+        index = max(i for i, text in enumerate(texts) if chapter in text)
+        assert index not in landscape, chapter
+    assert 0 not in landscape and 1 not in landscape
 
 
-def _headers(key: str) -> list[str]:
-    return [STRINGS["ko"][label] for _, label, _ in COLUMNS[key]]
+def test_recovered_prompt_and_day_groups_are_rendered(tmp_path: Path) -> None:
+    _, texts, _ = _render(tmp_path, prompt="경쟁사 제안서를 요약해줘")
+    body = "\n".join(texts)
+    assert "경쟁사 제안서를 요약해줘" in body
+    assert "세션 s1" in body
+    assert "2026-03-01 (2건)" in body and "일자 미상 (1건)" in body
 
 
-def test_table_headers_come_from_columns_labels_in_ko(tmp_path: Path) -> None:
-    out = render_pdf(_rich_model(), tmp_path / "report.pdf")
-
-    text = "".join("".join(_page_texts(out)).split())
-    for key in ("ai_tools", "ai_queries", "timeline", "exports"):
-        for header in _headers(key):
-            assert "".join(header.split()) in text, (key, header)
+def test_serif_body_font_is_embedded(tmp_path: Path) -> None:
+    path, _, _ = _render(tmp_path)
+    data = path.read_bytes()
+    assert b"NanumMyeongjo" in data
+    assert b"Courier" not in data
 
 
-def test_no_raw_json_or_internal_keys_in_text(tmp_path: Path) -> None:
-    model = _rich_model()
-    model.coverage = {
-        "plugin_runs": [{"name": "p", "records": {"a": 1}}],
-        "parse_warnings": [],
-        "not_decoded": [],
-    }
-    out = render_pdf(model, tmp_path / "report.pdf")
-
-    lines = [line.strip() for page in _page_texts(out) for line in page.splitlines() if line.strip()]
-    assert not [line for line in lines if line.startswith(("{", "["))]
-    text = "".join(lines)
-    assert "artifact_id" not in text
-    assert "kind_label" not in text
-
-
-def test_timeline_and_exports_pages_are_landscape_others_portrait(tmp_path: Path) -> None:
-    out = render_pdf(_rich_model(), tmp_path / "report.pdf")
-
-    doc = pdfium.PdfDocument(out)
-    try:
-        landscape_text = []
-        for index in range(len(doc)):
-            width, height = doc[index].get_size()
-            page_text = "".join(doc[index].get_textpage().get_text_range().split())
-            if width > height:
-                landscape_text.append(page_text)
-        joined = "".join(landscape_text)
-        assert "".join(STRINGS["ko"]["section.timeline"].split()) in joined
-        assert "".join(STRINGS["ko"]["section.exports"].split()) in joined
-    finally:
-        doc.close()
-
-
-def test_long_hash_is_present_unbroken_in_text(tmp_path: Path) -> None:
-    out = render_pdf(_rich_model(), tmp_path / "report.pdf")
-
-    text = "".join("".join(_page_texts(out)).split())
-    assert SHA in text
+def test_english_pdf_renders(tmp_path: Path) -> None:
+    _, texts, _ = _render(tmp_path, lang="en")
+    assert "Chapter 1" in "\n".join(texts)
+    assert "Document No. T-1-01 | Confidential" in texts[2]

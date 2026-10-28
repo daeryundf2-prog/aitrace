@@ -177,7 +177,26 @@ def full_store(tmp_path: Path) -> CaseStore:
         {"path": "/Users/kim/proposal.md", "size": 3, "is_dir": False, "in_use": True, "source": "stat"},
         "/Users/kim/proposal.md",
     )
-    store.add([prompt, reply, orphan, credential, encrypted, warning, doc])
+    tool_call = _artifact(
+        ArtifactKind.AI_TOOL_CALL,
+        "t1",
+        {
+            "tool": "Claude Code",
+            "session_id": "s1",
+            "call_name": "Write",
+            "file_path": "/Users/kim/proposal.md",
+            "content": "body text",
+        },
+        "/Users/kim/.claude/s1.jsonl",
+        "kim",
+    )
+    instruction = _artifact(
+        ArtifactKind.AI_APP_PRESENCE,
+        "a2",
+        {"tool": "Claude Code", "kind": "repo_ai_config", "status": "present", "detail": "CLAUDE.md"},
+        "/Users/kim/repo/CLAUDE.md",
+    )
+    store.add([prompt, reply, orphan, credential, encrypted, warning, doc, tool_call, instruction])
 
     e_prompt = _event(prompt, T0 + timedelta(minutes=5), EventCategory.AI_ACTIVITY, Actor.HUMAN)
     e_reply = _event(reply, T0 + timedelta(minutes=6), EventCategory.AI_ACTIVITY, Actor.AI)
@@ -278,9 +297,44 @@ def _build(store: CaseStore, run_info: dict[str, object] | None = None, lang: st
 
 def test_section_keys_order_matches_appendix_e(full_store: CaseStore) -> None:
     model = _build(full_store)
+    extras = ["tool_calls", "instructions", "generated_files", "chapters"]
     assert list(SECTION_KEYS) == APPENDIX_E_ORDER
-    assert list(model.to_dict()) == APPENDIX_E_ORDER
-    assert list(json.loads(model.to_json())) == APPENDIX_E_ORDER
+    assert list(model.to_dict()) == [*APPENDIX_E_ORDER, *extras]
+    assert list(json.loads(model.to_json())) == [*APPENDIX_E_ORDER, *extras]
+
+
+def test_chapters_list_describes_rendered_order(full_store: CaseStore) -> None:
+    chapters = _build(full_store, lang="ko").to_dict()["chapters"]
+    assert [c["no"] for c in chapters] == [f"제{n}장" for n in range(1, 10)] + ["별첨1", "별첨2", "별첨3"]
+    assert chapters[0]["title"] == "개요"
+    assert [s["no"] for s in chapters[0]["sections"]] == ["1.", "2.", "3.", "4."]
+    assert chapters[4]["landscape"] is True and chapters[0]["landscape"] is False
+    english = _build(full_store, lang="en").to_dict()["chapters"]
+    assert english[0]["no"] == "Chapter 1" and english[0]["title"] == "Overview"
+
+
+def test_tool_calls_instructions_and_generated_files(full_store: CaseStore) -> None:
+    model = _build(full_store, lang="ko")
+    (call,) = model.tool_calls
+    assert call["role"] == "tool_call" and call["tool"] == "Claude Code" and call["session"] == "s1"
+    assert "Write" in call["text"] and "/Users/kim/proposal.md" in call["text"] and "body text" in call["text"]
+    (instruction,) = model.instructions
+    assert instruction["source"] == "/Users/kim/repo/CLAUDE.md"
+    assert "CLAUDE.md" in instruction["text"]
+    (generated,) = model.generated_files
+    assert generated["verdict"] == "ai_generated" and generated["verdict_label"] == "AI 생성"
+    assert any(line.startswith("도구 호출: Claude Code Write") for line in generated["origin"])
+
+
+def test_timeline_days_groups_by_local_date(full_store: CaseStore) -> None:
+    model = _build(full_store)
+    days = model.timeline_days(100)
+    assert [day for day, _ in days] == ["2026-03-01", None]
+    rows = days[0][1]
+    assert rows[0]["time_only"] == "18:00:00 (+09:00)"
+    assert [r["time_only"] for r in rows] == sorted(r["time_only"] for r in rows)
+    shown = [r for _, rows in model.timeline_days(2) for r in rows if not r.get("collapsed")]
+    assert len(shown) == 2
 
 
 def test_empty_store_gives_empty_lists_and_no_findings_summary(empty_store: CaseStore) -> None:
@@ -576,7 +630,8 @@ def test_chronological_steps_and_columns_exist_in_rows(tmp_path: Path) -> None:
         if not rows:  # exports / ai_queries / timeline are covered by the full_store test
             continue
         for field_key, label_key, weight in spec:
-            assert all(field_key in row for row in rows), (section, field_key)
+            if field_key != "time_only":
+                assert all(field_key in row for row in rows), (section, field_key)
             assert t(label_key, "ko") and t(label_key, "en") and weight > 0
     assert all("artifact_id" not in key and "id" != key for spec in COLUMNS.values() for key, _, _ in spec)
 
@@ -585,9 +640,10 @@ def test_columns_exports_and_full_store(full_store: CaseStore) -> None:
     model = _build(full_store, lang="ko")
     for field_key, _, _ in COLUMNS["exports"]:
         assert field_key in model.exports[0]
-    for section in ("ai_tools", "ai_queries", "file_lifecycle", "attribution", "timeline"):
+    for section in ("ai_tools", "file_lifecycle", "timeline"):
         for field_key, _, _ in COLUMNS[section]:
-            assert all(field_key in row for row in getattr(model, section)), (section, field_key)
+            if field_key != "time_only":
+                assert all(field_key in row for row in getattr(model, section)), (section, field_key)
 
 
 def test_summary_bullets_have_no_duplicates_and_are_localized(tmp_path: Path) -> None:

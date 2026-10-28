@@ -23,6 +23,15 @@ from aitrace.core.model import Artifact, Attribution, Case, Evidence, Finding, f
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.db.store import CaseStore
 from aitrace.report.i18n import DEFAULT_LANG, LIMITATION_ALIASES, STANDARDS, STRINGS, t
+from aitrace.report.timeline import (
+    Focus,
+    collapsed_row,
+    display_summary,
+    focus_paths,
+    is_relevant,
+    norm_path,
+    split_days,
+)
 
 SECTION_KEYS: tuple[str, ...] = (
     "case",
@@ -43,6 +52,9 @@ SECTION_KEYS: tuple[str, ...] = (
     "signature",
     "run",
 )
+
+# Display-only sections added for the chapter layout; they follow SECTION_KEYS in report.json.
+EXTRA_KEYS: tuple[str, ...] = ("tool_calls", "instructions", "generated_files", "chapters")
 
 TIMELINE_COLUMNS: tuple[str, ...] = (
     "ts_utc",
@@ -66,41 +78,24 @@ COLUMNS: dict[str, list[tuple[str, str, int]]] = {
         ("last_seen_local", "col.last_seen_local", 3),
         ("evidence_count", "col.evidence_count", 1),
     ],
-    "ai_queries": [
-        ("ts_local", "col.ts_local", 3),
-        ("tool", "col.tool", 2),
-        ("role_label", "col.role", 2),
-        ("text", "col.text", 8),
-        ("source_name", "col.source_name", 3),
-    ],
     "file_lifecycle": [
-        ("severity_label", "col.severity", 1),
-        ("display_title", "col.display_title", 4),
-        ("display_steps", "col.display_steps", 5),
-        ("links_summary", "col.links_summary", 3),
+        ("display_path", "changes.col_path", 4),
+        ("display_steps", "changes.col_steps", 5),
+        ("links_summary", "changes.col_links", 3),
     ],
     "exfil": [
-        ("severity_label", "col.severity", 1),
-        ("display_channel", "col.display_channel", 4),
-        ("ts_local", "col.ts_local", 3),
-        ("actor_label", "col.actor", 1),
-        ("user", "col.user", 2),
-        ("source_name", "col.source_name", 3),
-    ],
-    "attribution": [
-        ("subject", "col.subject", 4),
-        ("verdict_label", "col.verdict", 2),
-        ("confidence_display", "col.confidence_display", 2),
-        ("signals_summary", "col.signals_summary", 4),
-        ("limitations_display", "col.limitations", 4),
+        ("display_channel", "transfer.col_channel", 4),
+        ("ts_local", "transfer.col_time", 3),
+        ("actor_label", "transfer.col_actor", 1),
+        ("user", "transfer.col_user", 2),
+        ("source_name", "transfer.col_source", 3),
     ],
     "timeline": [
-        ("ts_local", "col.ts_local", 3),
-        ("category_label", "col.category", 2),
-        ("actor_label", "col.actor", 1),
-        ("user", "col.user", 2),
-        ("summary", "col.summary", 5),
-        ("source_path", "col.source_path", 4),
+        ("time_only", "timeline.col_time", 3),
+        ("category_label", "timeline.col_kind", 2),
+        ("actor_label", "timeline.col_actor", 1),
+        ("summary", "timeline.col_content", 6),
+        ("source_path", "timeline.col_source", 5),
     ],
     "exports": [
         ("export_path", "col.export_path", 5),
@@ -124,6 +119,9 @@ _LINKED_FINDING_CATEGORIES = (
     FindingCategory.FILE_LIFECYCLE,
     FindingCategory.EXFIL_CHANNEL,
 )
+_DISPLAY_LINK_CATEGORIES = (FindingCategory.AI_TOOL_USAGE, FindingCategory.AI_QUERY, FindingCategory.EXFIL_CHANNEL)
+_INVENTORY_KINDS = frozenset({ArtifactKind.FILE_RECORD, ArtifactKind.FILE_JOURNAL})
+_DELETED_STEPS = frozenset({"deleted", "recycled"})
 _ROLE_ACTOR = {"user": Actor.HUMAN, "assistant": Actor.AI, "system": Actor.SYSTEM, "tool": Actor.SYSTEM}
 _NOT_DECODED_STATUSES = frozenset({"encrypted_not_decoded", "unsupported"})
 _NOT_INSTALLED = "not installed"
@@ -163,9 +161,21 @@ class ReportModel:
     signature: dict[str, Any]
     run: dict[str, Any]
     priority_rows: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    instructions: list[dict[str, Any]] = field(default_factory=list)
+    generated_files: list[dict[str, Any]] = field(default_factory=list)
+    timeline_relevant: tuple[bool, ...] = field(default=(), repr=False, compare=False)
+    timeline_text: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    lifecycle_hidden: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return {key: _plain(getattr(self, key)) for key in SECTION_KEYS}
+        from aitrace.report.layout import chapter_outline
+
+        data = {key: _plain(getattr(self, key)) for key in SECTION_KEYS}
+        for key in EXTRA_KEYS[:-1]:
+            data[key] = _plain(getattr(self, key))
+        data["chapters"] = chapter_outline(self)
+        return data
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
@@ -175,6 +185,33 @@ class ReportModel:
         first = [row for i, row in enumerate(self.timeline) if i in self.priority_rows]
         rest = [row for i, row in enumerate(self.timeline) if i not in self.priority_rows]
         return (first + rest)[:limit]
+
+    def timeline_days(self, limit: int) -> list[tuple[str | None, list[dict[str, Any]]]]:
+        """Relevant rows per local date plus one collapsed row for the rest; undated days last."""
+        flags = self.timeline_relevant or (True,) * len(self.timeline)
+        over = {i for i, keep in enumerate(flags) if keep}
+        over = set(sorted(over)[limit:])
+        rows: list[dict[str, Any]] = []
+        kept: list[bool] = []
+        for i, row in enumerate(self.timeline):
+            if i in over:
+                continue
+            shown = dict(row)
+            if flags[i] and self.timeline_text:
+                shown["summary"] = self.timeline_text[i]
+            rows.append(shown)
+            kept.append(flags[i])
+        grouped = split_days(rows, kept)
+        result: list[tuple[str | None, list[dict[str, Any]]]] = []
+        for day, (shown_rows, dropped) in grouped.items():
+            if dropped:
+                shown_rows.append(collapsed_row(dropped, self.lang, TIMELINE_CSV_PATH))
+            result.append((day, shown_rows))
+        result.sort(key=lambda item: (item[0] is None, item[0] or ""))
+        return result
+
+    def lifecycle_rows(self) -> list[dict[str, Any]]:
+        return [row for i, row in enumerate(self.file_lifecycle) if i not in self.lifecycle_hidden]
 
     @property
     def lang(self) -> str:
@@ -219,7 +256,8 @@ class ReportModel:
         return _pairs(self.methodology, spec, self.lang)
 
     def timeline_note(self, limit: int, lang: str) -> str | None:
-        omitted = len(self.timeline) - limit
+        total = sum(self.timeline_relevant) if self.timeline_relevant else len(self.timeline)
+        omitted = total - limit
         if omitted <= 0:
             return None
         return t("timeline.note", lang, limit=limit, omitted=omitted, csv=TIMELINE_CSV_PATH)
@@ -385,6 +423,7 @@ def _case_section(case: Case, lang: str) -> dict[str, Any]:
         "tool_version": case.tool_version,
         "notes": case.notes,
         "handling_notice": t("handling_notice", lang),
+        "document_number": f"{case.number or case.id[:8]}-01",
     }
 
 
@@ -393,6 +432,7 @@ def _evidence_section(evidences: Sequence[Evidence], lang: str) -> list[dict[str
     for ev in sorted(evidences, key=lambda e: e.id):
         row = ev.to_dict()
         row["verification_label"] = _label(f"verification.{ev.verification_status}", lang, ev.verification_status)
+        row["limitations_display"] = _localize_limits(ev.limitations, lang)
         rows.append(row)
     return rows
 
@@ -440,6 +480,7 @@ def _lifecycle_row(finding: Finding, tz: str, lang: str) -> dict[str, Any]:
         for link in finding.data.get("links") or []
     ]
     row["display_title"] = _finding_title(finding, lang) if not path else t("title.file_lifecycle", lang, path=path)
+    row["display_path"] = path or _finding_title(finding, lang)
     row["display_steps"] = display_steps
     row["links_summary"] = ", ".join(_dedupe(links)) or t("link.none", lang)
     return row
@@ -547,6 +588,157 @@ def _ai_queries_section(
         keyed.append(((ts is None, ts.isoformat() if ts is not None else ""), row))
     keyed.sort(key=lambda pair: pair[0])
     return [row for _, row in keyed]
+
+
+_INSTRUCTION_KINDS = frozenset({"repo_ai_config", "config", "instruction", "persona"})
+_INSTRUCTION_TEXT_KEYS = ("instructions", "system_prompt", "text")
+_ORIGIN_KINDS = frozenset(
+    {
+        ArtifactKind.AI_TOOL_CALL,
+        ArtifactKind.DOWNLOAD_ORIGIN,
+        ArtifactKind.BROWSER_DOWNLOAD,
+        ArtifactKind.AI_CHAT_MESSAGE,
+        ArtifactKind.VCS_COMMIT,
+        ArtifactKind.MEDIA_PROVENANCE,
+    }
+)
+_VERDICT_ORDER = {"ai_generated": 0, "ai_assisted": 1, "undetermined": 2}
+
+
+def _instructions_section(
+    presence: Sequence[Artifact], first_event: Mapping[str, Any], tz: str, lang: str
+) -> list[dict[str, Any]]:
+    """Presence items (config / store) that carry instruction text, shaped like ai_queries rows."""
+    rows: list[dict[str, Any]] = []
+    for a in presence:
+        kind = str(a.data.get("kind") or "")
+        text = next((str(a.data[k]) for k in _INSTRUCTION_TEXT_KEYS if a.data.get(k)), "")
+        if kind not in _INSTRUCTION_KINDS and not text:
+            continue
+        tool = a.data.get("tool")
+        text = text or t(
+            "prompts.instruction_text", lang, tool=tool or t("sec.unknown_tool", lang), detail=a.data.get("detail") or ""
+        )
+        event = first_event.get(a.id)
+        ts = event.ts_utc if event is not None else None
+        rows.append(
+            {
+                "ts_utc": fmt_utc(ts) if ts is not None else None,
+                "ts_local": fmt_local(ts, tz) if ts is not None else None,
+                "tool": tool,
+                "session": a.data.get("session_id"),
+                "role": "instruction",
+                "role_label": t("prompts.instruction", lang),
+                "text": text,
+                "source": a.provenance.source_path,
+                "artifact_id": a.id,
+            }
+        )
+    rows.sort(key=lambda r: (r["tool"] or "", r["source"], r["artifact_id"]))
+    return rows
+
+
+def _tool_calls_section(
+    calls: Sequence[Artifact], first_event: Mapping[str, Any], tz: str, lang: str
+) -> list[dict[str, Any]]:
+    keyed: list[tuple[tuple[bool, str], dict[str, Any]]] = []
+    for a in calls:
+        event = first_event.get(a.id)
+        ts = event.ts_utc if event is not None else None
+        name = str(a.data.get("call_name") or "")
+        path = a.data.get("file_path") or a.data.get("raw_path")
+        head = (
+            t("prompts.tool_call_text", lang, name=name, path=path)
+            if path
+            else t("prompts.tool_call_text_nopath", lang, name=name)
+        )
+        content = a.data.get("content")
+        text = f"{head}\n{t('prompts.tool_call_content', lang)}:\n{content}" if content else head
+        row = {
+            "ts_utc": fmt_utc(ts) if ts is not None else None,
+            "ts_local": fmt_local(ts, tz) if ts is not None else None,
+            "tool": a.data.get("tool"),
+            "session": a.data.get("session_id"),
+            "role": "tool_call",
+            "role_label": t("prompts.tool_call", lang),
+            "call_name": name,
+            "file_path": path,
+            "text": text,
+            "source": a.provenance.source_path,
+            "artifact_id": a.id,
+        }
+        keyed.append(((ts is None, ts.isoformat() if ts is not None else ""), row))
+    keyed.sort(key=lambda pair: pair[0])
+    return [row for _, row in keyed]
+
+
+def _origin_line(a: Artifact, first_event: Mapping[str, Any], tz: str, lang: str) -> str | None:
+    data = a.data
+    kind = a.kind
+    if kind is ArtifactKind.AI_TOOL_CALL:
+        event = first_event.get(a.id)
+        stamp = fmt_local(event.ts_utc, tz) if event is not None and event.ts_utc is not None else ""
+        return t(
+            "origin.tool_call",
+            lang,
+            tool=data.get("tool") or "",
+            name=data.get("call_name") or "",
+            session=data.get("session_id") or "-",
+            time=stamp or "-",
+        )
+    if kind is ArtifactKind.DOWNLOAD_ORIGIN:
+        return t("origin.download", lang, service=data.get("ai_service") or "-", url=data.get("url") or "-")
+    if kind is ArtifactKind.BROWSER_DOWNLOAD:
+        return t(
+            "origin.browser_download", lang, service=data.get("ai_service") or "-", url=data.get("url") or "-"
+        )
+    if kind is ArtifactKind.AI_CHAT_MESSAGE:
+        return t("origin.session", lang, tool=data.get("tool") or "", session=data.get("session_id") or "-")
+    if kind is ArtifactKind.VCS_COMMIT:
+        return t("origin.commit", lang, sha=str(data.get("sha") or "")[:12])
+    if kind is ArtifactKind.MEDIA_PROVENANCE:
+        extra = data.get("extra") or {}
+        if extra.get("recovered_from") == "browser_cache":
+            return t("origin.cache", lang, url=extra.get("url") or "-")
+    return None
+
+
+def _generated_files_section(
+    attributions: Sequence[Attribution],
+    related: Mapping[str, Artifact],
+    calls: Sequence[Artifact],
+    first_event: Mapping[str, Any],
+    tz: str,
+    lang: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in attributions:
+        if item.verdict is Verdict.HUMAN_AUTHORED:
+            continue
+        ids = list(item.subject_artifact_ids)
+        for signal in item.signals:
+            ids.extend(signal.artifact_ids)
+        ids.extend(c.id for c in calls if c.data.get("file_path") == item.subject)
+        origins = [
+            line
+            for aid in dict.fromkeys(ids)
+            if (a := related.get(aid)) is not None and (line := _origin_line(a, first_event, tz, lang))
+        ]
+        rows.append(
+            {
+                "attribution_id": item.id,
+                "subject": item.subject,
+                "verdict": item.verdict.value,
+                "verdict_label": _enum_label("verdict", item.verdict.value, lang),
+                "confidence": item.confidence,
+                "confidence_display": f"{item.confidence:.2f} ({_enum_label('band', item.band.value, lang)})",
+                "signals_summary": _signals_summary(item, lang),
+                "origin": _dedupe(origins),
+                "limitations_display": _localize_limits(item.limitations, lang),
+            }
+        )
+    rows.sort(key=lambda r: (_VERDICT_ORDER.get(r["verdict"], 9), r["subject"]))
+    return rows
 
 
 def _top_bullets(findings: Sequence[Finding], lang: str) -> list[str]:
@@ -677,6 +869,17 @@ def _custody_rows(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _inventory_only(finding: Finding, by_id: Mapping[str, Artifact], focus: Focus) -> bool:
+    """True when a lifecycle row rests on filesystem inventory alone: no deletion, attributed path or tool call."""
+    steps = finding.data.get("lifecycle") or []
+    if not steps or norm_path(finding.data.get("path")) in focus.paths:
+        return False
+    if any(step.get("event") in _DELETED_STEPS for step in steps):
+        return False
+    kinds = {a.kind for step in steps if (a := by_id.get(str(step.get("artifact_id")))) is not None}
+    return bool(kinds) and kinds <= _INVENTORY_KINDS
+
+
 def build_report_model(
     store: CaseStore,
     case: Case,
@@ -691,12 +894,18 @@ def build_report_model(
         ArtifactKind.AI_CHAT_MESSAGE: [],
         ArtifactKind.AI_APP_PRESENCE: [],
         ArtifactKind.PARSE_WARNING: [],
+        ArtifactKind.AI_TOOL_CALL: [],
     }
+    related: dict[str, Artifact] = {}
+    by_id: dict[str, Artifact] = {}
     for artifact in store.artifacts():
+        by_id[artifact.id] = artifact
         source_paths[artifact.id] = artifact.provenance.source_path
         bucket = buckets.get(artifact.kind)
         if bucket is not None:
             bucket.append(artifact)
+        if artifact.kind in _ORIGIN_KINDS:
+            related[artifact.id] = artifact
 
     events = list(store.events())
     first_event: dict[str, Any] = {}
@@ -716,9 +925,24 @@ def build_report_model(
     for a in attributions:
         linked_artifacts.update(a.subject_artifact_ids)
 
+    focus = Focus(
+        paths=focus_paths((a.subject for a in attributions), buckets[ArtifactKind.AI_TOOL_CALL]),
+        linked_events=frozenset(
+            eid for cat in _DISPLAY_LINK_CATEGORIES for f in by_category[cat] for eid in f.event_ids
+        ),
+        linked_artifacts=frozenset(
+            aid for cat in _DISPLAY_LINK_CATEGORIES for f in by_category[cat] for aid in f.artifact_ids
+        ),
+    )
+    relevant: list[bool] = []
+    texts: list[str] = []
+
     timeline: list[dict[str, Any]] = []
     priority: set[int] = set()
     for i, e in enumerate(events):
+        art = by_id.get(e.artifact_id)
+        relevant.append(is_relevant(e, art, focus))
+        texts.append(display_summary(e, art, lang))
         timeline.append(
             {
                 "ts_utc": fmt_utc(e.ts_utc) if e.ts_utc is not None else None,
@@ -787,4 +1011,14 @@ def build_report_model(
         },
         run=run,
         priority_rows=frozenset(priority),
+        timeline_relevant=tuple(relevant),
+        timeline_text=tuple(texts),
+        lifecycle_hidden=frozenset(
+            i for i, f in enumerate(by_category[FindingCategory.FILE_LIFECYCLE]) if _inventory_only(f, by_id, focus)
+        ),
+        tool_calls=_tool_calls_section(buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang),
+        instructions=_instructions_section(buckets[ArtifactKind.AI_APP_PRESENCE], first_event, tz, lang),
+        generated_files=_generated_files_section(
+            attributions, related, buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang
+        ),
     )

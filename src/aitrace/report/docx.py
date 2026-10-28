@@ -1,114 +1,120 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from docx import Document
+from docx import Document as new_document
 from docx.document import Document as DocumentObject
 from docx.enum.section import WD_ORIENT, WD_SECTION
-from docx.oxml import OxmlElement
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.opc.oxml import serialize_part_xml
+from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
-from docx.shared import Emu, Inches, Pt
-from docx.styles.style import BaseStyle
+from docx.shared import Emu, Mm, Pt, RGBColor
+from docx.styles.style import ParagraphStyle
 from docx.table import _Row
 
-from aitrace.report.i18n import DEFAULT_LANG, t
-from aitrace.report.model import (
-    COLUMNS,
-    SECTION_KEYS,
-    TIMELINE_LIMIT_PDF_DOCX,
-    ReportModel,
-)
+from aitrace.report.i18n import t
+from aitrace.report.layout import Document, Heading, Para, Table, build_document
+from aitrace.report.model import TIMELINE_LIMIT_PDF_DOCX, ReportModel
 
-EAST_ASIAN_FONT = "Malgun Gothic"
-MONO_FONT = "Consolas"
-TABLE_FONT_PT = 9
-MONO_FONT_PT = 7.5
-PAGE_MARGIN_IN = 0.8
-_STYLES_WITH_FONT: tuple[str, ...] = ("Normal", "Title", "Heading 1", "Heading 2", "List Bullet")
-_MONO_KEYS = frozenset({"sha256", "media_sha256", "artifact_id", "id"})
-_MONO_LABEL_KEYS = ("label.media_sha256", "label.acquisition_hashes", "label.evidence_id", "label.case_id")
-
-_CoverageCol = tuple[str, str, str, int]
-_COVERAGE_COLUMNS: dict[str, list[_CoverageCol]] = {
-    "plugin_runs": [
-        ("name", "플러그인", "Plugin", 3),
-        ("version", "버전", "Version", 2),
-        ("status", "상태", "Status", 2),
-        ("records", "레코드", "Records", 1),
-        ("warnings", "경고", "Warnings", 1),
-        ("error", "오류", "Error", 4),
-    ],
-    "parse_warnings": [
-        ("plugin", "플러그인", "Plugin", 2),
-        ("message", "메시지", "Message", 5),
-        ("source_path", "원본 경로", "Source path", 5),
-    ],
-    "not_decoded": [
-        ("tool", "도구", "Tool", 2),
-        ("status", "상태", "Status", 3),
-        ("detail", "내용", "Detail", 4),
-        ("source_path", "원본 경로", "Source path", 5),
-    ],
-    "findings": [
-        ("severity_label", "중요도", "Severity", 1),
-        ("title", "제목", "Title", 4),
-        ("narrative", "상세", "Narrative", 8),
-    ],
-}
+SERIF = "NanumMyeongjo"
+SANS = "NanumGothic"
+FALLBACK_FONTS = ((SERIF, "Batang"), (SANS, "Malgun Gothic"))
+BODY_PT = 10.5
+TABLE_PT = 9
+HEADER_PT = 8
+HEADING_PT = {1: 16, 2: 12, 3: BODY_PT, 4: BODY_PT}
+MARGIN_MM = 25
+A4_MM = (210, 297)
+HEAD_FILL = "EFEFEF"
+GRAY = RGBColor(0x80, 0x80, 0x80)
+BLACK = RGBColor(0, 0, 0)
 
 
-def _set_east_asian_font(style: BaseStyle) -> None:
+def _set_font(style: ParagraphStyle, name: str, size: float, *, bold: bool = False) -> None:
     fonts = style.element.get_or_add_rPr().get_or_add_rFonts()
-    fonts.set(qn("w:eastAsia"), EAST_ASIAN_FONT)
+    for attr in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+        fonts.attrib.pop(qn(attr), None)
+    for slot in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        fonts.set(qn(slot), name)
+    style.font.size = Pt(size)
+    style.font.bold = bold
+    style.font.color.rgb = BLACK
 
 
-def _repeat_header(row: _Row) -> None:
-    tr_pr = row._tr.get_or_add_trPr()
-    marker = OxmlElement("w:tblHeader")
-    marker.set(qn("w:val"), "true")
-    tr_pr.append(marker)
+def _declare_fallback_fonts(doc: DocumentObject) -> None:
+    for rel in doc.part.rels.values():
+        if not rel.reltype.endswith("/fontTable"):
+            continue
+        part = rel.target_part
+        root = parse_xml(part.blob)
+        for name, alternative in FALLBACK_FONTS:
+            font = OxmlElement("w:font")
+            font.set(qn("w:name"), name)
+            alt = OxmlElement("w:altName")
+            alt.set(qn("w:val"), alternative)
+            font.append(alt)
+            root.append(font)
+        cast(Any, part)._blob = serialize_part_xml(root)
 
 
-def _cell(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, Mapping):
-        return "; ".join(f"{k}: {_cell(v)}" for k, v in value.items())
-    if isinstance(value, (list, tuple)):
-        return "\n".join(_cell(v) for v in value)
-    return str(value)
+def _style(doc: DocumentObject, name: str) -> ParagraphStyle:
+    return cast(ParagraphStyle, doc.styles[name])
 
 
-def _style_run(run: Any, *, mono: bool = False, bold: bool = False) -> None:
-    if mono:
-        run.font.name = MONO_FONT
-        run.font.size = Pt(MONO_FONT_PT)
-    else:
-        run.font.size = Pt(TABLE_FONT_PT)
-    if bold:
-        run.bold = True
+def _apply_styles(doc: DocumentObject) -> None:
+    _set_font(_style(doc, "Normal"), SERIF, BODY_PT)
+    normal = _style(doc, "Normal").paragraph_format
+    normal.space_after = Pt(6)
+    normal.line_spacing = 1.5
+    for level, size in HEADING_PT.items():
+        style = _style(doc, f"Heading {level}")
+        _set_font(style, SANS, size, bold=True)
+        style.paragraph_format.space_before = Pt(18 if level > 1 else 0)
+        style.paragraph_format.space_after = Pt(8)
+        style.paragraph_format.keep_with_next = True
 
 
-def _pair(doc: DocumentObject, label: str, value: object, *, mono: bool = False) -> None:
-    paragraph = doc.add_paragraph()
-    paragraph.add_run(f"{label}: ").bold = True
-    run = paragraph.add_run(_cell(value))
-    if mono:
-        run.font.name = MONO_FONT
-        run.font.size = Pt(MONO_FONT_PT)
+def _add_field(paragraph: Any, instruction: str) -> None:
+    simple = OxmlElement("w:fldSimple")
+    simple.set(qn("w:instr"), instruction)
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "1"
+    run.append(text)
+    simple.append(run)
+    paragraph._p.append(simple)
 
 
-def _pairs(doc: DocumentObject, pairs: Sequence[tuple[str, str]], lang: str) -> None:
-    mono_labels = {t(key, lang) for key in _MONO_LABEL_KEYS}
-    for label, value in pairs:
-        _pair(doc, label, value, mono=label in mono_labels)
+def _page_setup(doc: DocumentObject, header_text: str) -> None:
+    section = doc.sections[0]
+    section.page_width, section.page_height = Mm(A4_MM[0]), Mm(A4_MM[1])
+    section.left_margin = section.right_margin = Mm(MARGIN_MM)
+    section.top_margin = section.bottom_margin = Mm(MARGIN_MM)
+    section.different_first_page_header_footer = True
+    head = section.header.paragraphs[0]
+    head.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = head.add_run(header_text)
+    run.font.size = Pt(HEADER_PT)
+    run.font.color.rgb = GRAY
+    foot = section.footer.paragraphs[0]
+    foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    foot.add_run("- ")
+    _add_field(foot, "PAGE")
+    foot.add_run(" / ")
+    _add_field(foot, "NUMPAGES")
+    foot.add_run(" -")
+    for run in foot.runs:
+        run.font.size = Pt(TABLE_PT)
 
 
-def _bullets(doc: DocumentObject, items: Sequence[str]) -> None:
-    for item in items:
-        doc.add_paragraph(item, style="List Bullet")
+def _start_section(doc: DocumentObject, *, landscape: bool) -> None:
+    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    section.different_first_page_header_footer = False
+    wide, narrow = Mm(max(A4_MM)), Mm(min(A4_MM))
+    section.orientation = WD_ORIENT.LANDSCAPE if landscape else WD_ORIENT.PORTRAIT
+    section.page_width, section.page_height = (wide, narrow) if landscape else (narrow, wide)
 
 
 def _usable_width(doc: DocumentObject) -> int:
@@ -116,196 +122,129 @@ def _usable_width(doc: DocumentObject) -> int:
     return int((section.page_width or 0) - (section.left_margin or 0) - (section.right_margin or 0))
 
 
-def _table(
-    doc: DocumentObject,
-    columns: Sequence[tuple[str, str, int, bool]],
-    rows: Sequence[Sequence[object]],
-    empty_text: str,
-) -> None:
-    if not rows:
-        doc.add_paragraph(empty_text)
-        return
-    table = doc.add_table(rows=1, cols=len(columns))
+def _shade(cell: Any, fill: str) -> None:
+    props = cell._tc.get_or_add_tcPr()
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:color"), "auto")
+    shading.set(qn("w:fill"), fill)
+    props.append(shading)
+
+
+def _repeat_header(row: _Row) -> None:
+    marker = OxmlElement("w:tblHeader")
+    marker.set(qn("w:val"), "true")
+    row._tr.get_or_add_trPr().append(marker)
+
+
+def _fill(cell: Any, text: str, *, bold: bool = False) -> None:
+    paragraph = cell.paragraphs[0]
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1.15
+    run = paragraph.add_run(text)
+    run.font.size = Pt(TABLE_PT)
+    run.bold = bold
+
+
+def _table(doc: DocumentObject, block: Table) -> None:
+    headers, rows, weights = block.headers, block.rows, block.weights
+    if block.caption:
+        note = doc.add_paragraph(block.caption)
+        note.paragraph_format.space_after = Pt(2)
+        note.paragraph_format.keep_with_next = True
+        note.runs[0].font.size = Pt(TABLE_PT)
+    table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Table Grid"
     table.autofit = False
     layout = OxmlElement("w:tblLayout")
     layout.set(qn("w:type"), "fixed")
     table._tbl.tblPr.append(layout)
-    total = sum(weight for _, _, weight, _ in columns)
+    total = sum(weights)
     usable = _usable_width(doc)
-    widths = [Emu(int(usable * weight / total)) for _, _, weight, _ in columns]
+    widths = [Emu(int(usable * w / total)) for w in weights]
     for col, width in zip(table.columns, widths, strict=True):
         col.width = width
-    header = table.rows[0]
-    _repeat_header(header)
-    for cell, (_, label, _, _), width in zip(header.cells, columns, widths, strict=True):
+    head = table.rows[0]
+    _repeat_header(head)
+    for cell, text, width in zip(head.cells, headers, widths, strict=True):
         cell.width = width
-        _style_run(cell.paragraphs[0].add_run(label), bold=True)
+        _shade(cell, HEAD_FILL)
+        _fill(cell, text, bold=True)
     for row in rows:
-        for cell, (_, _, _, mono), width, value in zip(
-            table.add_row().cells, columns, widths, row, strict=True
-        ):
+        for cell, text, width in zip(table.add_row().cells, row, widths, strict=True):
             cell.width = width
-            _style_run(cell.paragraphs[0].add_run(_cell(value)), mono=mono)
+            _fill(cell, text)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
-def _spec_table(doc: DocumentObject, section: str, rows: Sequence[Mapping[str, Any]], lang: str) -> None:
-    spec = COLUMNS[section]
-    columns = [(key, t(label_key, lang), weight, key in _MONO_KEYS) for key, label_key, weight in spec]
-    body = [[row.get(key) for key, _, _ in spec] for row in rows]
-    _table(doc, columns, body, t("summary.none", lang))
+def _cover(doc: DocumentObject, model_doc: Document) -> None:
+    for _ in range(4):
+        doc.add_paragraph()
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title.add_run(model_doc.title)
+    run.font.name = SANS
+    run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), SANS)
+    run.font.size = Pt(22)
+    run.bold = True
+    for _ in range(2):
+        doc.add_paragraph()
+    table = doc.add_table(rows=0, cols=2)
+    table.style = "Table Grid"
+    table.autofit = False
+    widths = [Emu(int(_usable_width(doc) * w / 7)) for w in (2, 5)]
+    for label, value in model_doc.cover:
+        cells = table.add_row().cells
+        for cell, text, width in zip(cells, (label, value), widths, strict=True):
+            cell.width = width
+            _fill(cell, text)
+    for _ in range(3):
+        doc.add_paragraph()
+    notice = doc.add_paragraph(model_doc.notice)
+    notice.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
-def _write_case(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _pairs(doc, model.case_pairs(), lang)
-
-
-def _write_evidence(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    groups = model.evidence_pairs()
-    if not groups:
-        doc.add_paragraph(t("summary.none", lang))
-    for i, pairs in enumerate(groups):
-        if i:
-            doc.add_paragraph()
-        _pairs(doc, pairs, lang)
-
-
-def _write_tools(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _pairs(doc, model.tools_pairs(), lang)
-
-
-def _write_methodology(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    for paragraph in model.methodology["paragraphs"]:
-        doc.add_paragraph(paragraph)
-    doc.add_paragraph().add_run(
-        model.methodology.get("standards_intro") or t("methodology.standards_intro", lang)
-    ).bold = True
-    _bullets(doc, model.methodology["standards"])
-    _pair(doc, t("label.tool_validation", lang), model.methodology["tool_validation"])
-
-
-def _write_summary(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    for item in model.summary:
-        doc.add_paragraph().add_run(item["question"]).bold = True
-        _bullets(doc, item["bullets"])
-
-
-def _write_ai_tools(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "ai_tools", model.ai_tools, lang)
-
-
-def _write_ai_queries(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "ai_queries", model.ai_queries, lang)
-
-
-def _write_file_lifecycle(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "file_lifecycle", model.file_lifecycle, lang)
-
-
-def _write_exfil(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "exfil", model.exfil, lang)
-
-
-def _write_attribution(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "attribution", model.attribution, lang)
-
-
-def _write_timeline(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "timeline", model.timeline_render(TIMELINE_LIMIT_PDF_DOCX), lang)
-    note = model.timeline_note(TIMELINE_LIMIT_PDF_DOCX, lang)
-    if note is not None:
-        doc.add_paragraph(note)
-
-
-def _write_exports(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _spec_table(doc, "exports", model.exports, lang)
-
-
-def _write_coverage(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    for name, label in (
-        ("plugin_runs", "coverage.plugin_runs"),
-        ("parse_warnings", "coverage.parse_warnings"),
-        ("not_decoded", "coverage.not_decoded"),
-        ("findings", "coverage.findings"),
-    ):
-        doc.add_paragraph().add_run(t(label, lang)).bold = True
-        spec = _COVERAGE_COLUMNS[name]
-        columns = [
-            (key, ko if lang == "ko" else en, weight, key in _MONO_KEYS) for key, ko, en, weight in spec
-        ]
-        rows: Sequence[Mapping[str, Any]] = model.coverage.get(name, [])
-        body = [[row.get(key) for key, _, _, _ in spec] for row in rows]
-        _table(doc, columns, body, t("summary.none", lang))
-
-
-def _write_limitations(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    _bullets(doc, model.limitations)
-
-
-def _write_custody(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    columns = [
-        ("seq", t("custody.seq", lang), 1, False),
-        ("actor", t("custody.actor", lang), 2, False),
-        ("action", t("custody.action", lang), 2, False),
-        ("detail", t("custody.detail", lang), 6, False),
-    ]
-    rows = [[e["seq"], e["actor"], e["action"], e["detail"]] for e in model.custody]
-    _table(doc, columns, rows, t("summary.none", lang))
-
-
-def _write_signature(doc: DocumentObject, model: ReportModel, lang: str) -> None:
-    columns = [
-        ("examiner", t("signature.examiner", lang), 3, False),
-        ("signature", t("signature.signature", lang), 4, False),
-        ("date", t("signature.date", lang), 2, False),
-    ]
-    _table(doc, columns, [[model.signature.get("examiner"), "", ""]], t("summary.none", lang))
-
-
-_SECTION_WRITERS: dict[str, Callable[[DocumentObject, ReportModel, str], None]] = {
-    "case": _write_case,
-    "evidence": _write_evidence,
-    "tools": _write_tools,
-    "methodology": _write_methodology,
-    "summary": _write_summary,
-    "ai_tools": _write_ai_tools,
-    "ai_queries": _write_ai_queries,
-    "file_lifecycle": _write_file_lifecycle,
-    "exfil": _write_exfil,
-    "attribution": _write_attribution,
-    "timeline": _write_timeline,
-    "exports": _write_exports,
-    "coverage": _write_coverage,
-    "limitations": _write_limitations,
-    "custody": _write_custody,
-    "signature": _write_signature,
-}
-
-
-def _start_section(doc: DocumentObject, *, landscape: bool) -> None:
-    section = doc.add_section(WD_SECTION.NEW_PAGE)
-    wide = Emu(max(section.page_width or 0, section.page_height or 0))
-    narrow = Emu(min(section.page_width or 0, section.page_height or 0))
-    section.orientation = WD_ORIENT.LANDSCAPE if landscape else WD_ORIENT.PORTRAIT
-    section.page_width, section.page_height = (wide, narrow) if landscape else (narrow, wide)
+def _toc(doc: DocumentObject, model_doc: Document, title: str) -> None:
+    doc.add_page_break()
+    head = doc.add_paragraph()
+    run = head.add_run(title)
+    run.font.name = SANS
+    run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), SANS)
+    run.font.size = Pt(HEADING_PT[1])
+    run.bold = True
+    for entry in model_doc.toc():
+        line = doc.add_paragraph(f"{entry.number} {entry.text}")
+        line.paragraph_format.left_indent = Mm(0 if entry.level == 1 else 8)
+        line.paragraph_format.space_after = Pt(3)
+        line.paragraph_format.line_spacing = 1.15
 
 
 def render_docx(model: ReportModel, out_path: Path | str) -> None:
-    lang = str(model.case.get("lang", DEFAULT_LANG))
-    doc = Document()
-    for name in _STYLES_WITH_FONT:
-        _set_east_asian_font(doc.styles[name])
-    first = doc.sections[0]
-    first.left_margin = first.right_margin = Inches(PAGE_MARGIN_IN)
-    doc.add_heading(t("report.title", lang), level=0)
-    doc.add_paragraph(t("handling_notice", lang))
-    for key in SECTION_KEYS:
-        if key == "run":
-            continue
-        if key == "timeline":
-            _start_section(doc, landscape=True)
-        doc.add_heading(t(f"section.{key}", lang), level=1)
-        _SECTION_WRITERS[key](doc, model, lang)
-        if key == "timeline":
-            _start_section(doc, landscape=False)
+    model_doc = build_document(model, TIMELINE_LIMIT_PDF_DOCX)
+    doc = new_document()
+    _apply_styles(doc)
+    _declare_fallback_fonts(doc)
+    doc.core_properties.title = model_doc.title
+    doc.core_properties.author = str(model.case.get("examiner") or "")
+    _page_setup(doc, model_doc.header_text)
+    _cover(doc, model_doc)
+    _toc(doc, model_doc, t("toc.title", model_doc.lang))
+    landscape = False
+    for block in model_doc.blocks:
+        if isinstance(block, Heading):
+            text = f"{block.number} {block.text}"
+            if block.level == 1:
+                if block.landscape != landscape:
+                    _start_section(doc, landscape=block.landscape)
+                    landscape = block.landscape
+                    doc.add_heading(text, level=1)
+                else:
+                    heading = doc.add_heading(text, level=1)
+                    heading.paragraph_format.page_break_before = True
+            else:
+                doc.add_heading(text, level=block.level)
+        elif isinstance(block, Para):
+            doc.add_paragraph(block.text)
+        else:
+            _table(doc, block)
     doc.save(str(out_path))

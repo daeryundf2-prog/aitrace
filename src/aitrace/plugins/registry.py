@@ -16,7 +16,11 @@ BUILTIN_PLUGINS: list[str] = [
     "aitrace.plugins.ai.ide_assistants",
     "aitrace.plugins.ai.local_llm",
     "aitrace.plugins.ai.sdk_keys",
+    "aitrace.plugins.ai.omo",
+    "aitrace.plugins.ai.opencode",
+    "aitrace.plugins.ai.hermes",
     "aitrace.plugins.browser.history_downloads",
+    "aitrace.plugins.browser.cache_images",
     "aitrace.plugins.shell.history",
     "aitrace.plugins.windows.mft",
     "aitrace.plugins.windows.usn",
@@ -30,6 +34,8 @@ BUILTIN_PLUGINS: list[str] = [
     "aitrace.plugins.provenance.images",
     "aitrace.plugins.provenance.docs_git",
     "aitrace.plugins.fsmeta.file_inventory",
+    "aitrace.plugins.fsmeta.download_origin",
+    "aitrace.plugins.fsmeta.doc_clues",
 ]
 
 log = logging.getLogger(__name__)

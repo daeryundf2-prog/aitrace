@@ -92,6 +92,13 @@ AI_PROGRAMS: dict[str, str] = {
     "gemini": "Gemini CLI",
     "aider": "Aider",
     "copilot": "GitHub Copilot CLI",
+    "opencode": "OpenCode",
+    "opencode.exe": "OpenCode",
+    "hermes": "Hermes Agent",
+    "hermes.exe": "Hermes Agent",
+    "omo.exe": "omo",
+    "omo.app": "omo",
+    "com.code-yeongyu.omo": "omo",
 }
 
 CANONICAL_TOOL_NAMES: tuple[str, ...] = (
@@ -112,6 +119,9 @@ CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "LM Studio",
     "Jan",
     "GPT4All",
+    "omo",
+    "OpenCode",
+    "Hermes Agent",
 )
 
 
@@ -166,7 +176,7 @@ COMMAND_RULES: list[CommandRule] = [
     CommandRule(
         "AI-CLI",
         ("ai_cli",),
-        r"^(sudo\s+)?(claude|codex|gemini|aider|ollama|llm|sgpt|copilot|cursor-agent|opencode)\b",
+        r"^(sudo\s+)?(claude|codex|gemini|aider|ollama|llm|sgpt|copilot|cursor-agent|opencode|hermes|omo|senpi)\b",
         None,
     ),
     CommandRule(

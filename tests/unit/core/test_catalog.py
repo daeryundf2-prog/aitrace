@@ -6,6 +6,7 @@ import pytest
 
 from aitrace.core.catalog import (
     AI_FILENAME_PATTERNS,
+    CANONICAL_TOOL_NAMES,
     COMMAND_RULES,
     EXPORT_KINDS,
     INTERESTING_NAME_PATTERNS,
@@ -64,10 +65,26 @@ def test_match_ai_domain_misses(url: str) -> None:
         ("claude.exe", "Claude Desktop"),
         ("codex", "Codex CLI"),
         ("LM Studio.exe", "LM Studio"),
+        ("opencode", "OpenCode"),
+        ("OpenCode.exe", "OpenCode"),
+        ("/usr/local/bin/hermes", "Hermes Agent"),
+        ("hermes.exe", "Hermes Agent"),
+        ("omo.exe", "omo"),
+        ("/Applications/omo.app", "omo"),
+        ("com.code-yeongyu.omo", "omo"),
     ],
 )
 def test_match_ai_program_hits(name: str, tool: str) -> None:
     assert match_ai_program(name) == tool
+
+
+def test_canonical_tool_names_include_new_agents() -> None:
+    assert {"omo", "OpenCode", "Hermes Agent"} <= set(CANONICAL_TOOL_NAMES)
+
+
+def test_new_ai_cli_commands_match() -> None:
+    for cmd in ("hermes chat", "omo run", "senpi", "sudo opencode"):
+        assert "AI-CLI" in _rules(cmd)
 
 
 def test_match_ai_program_miss() -> None:

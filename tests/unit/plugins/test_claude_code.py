@@ -238,7 +238,7 @@ def test_host_claude_sessions_parse_when_present() -> None:
     if not host_files:
         pytest.skip(f"store absent: {pattern}")
     fs = MemoryFS(
-        {f"/Users/shinyoohag/{p.relative_to(home).as_posix()}": p.read_bytes() for p in host_files},
+        {f"/Users/examiner/{p.relative_to(home).as_posix()}": p.read_bytes() for p in host_files},
         volume_os=OsFamily.MACOS,
     )
     ctx = ParseContext(fs, "real", "Asia/Seoul", logging.getLogger("t"))

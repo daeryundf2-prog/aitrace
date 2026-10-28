@@ -629,7 +629,11 @@ def _session_counts(model: ReportModel) -> dict[tuple[str, str, str | None], _Se
             continue
         tool = tool_label(q.get("tool"), lang)
         session = q.get("session")
-        machine = machine_of.get((tool, session)) or machine_label(q, meta, lang)
+        machine = (
+            machine_of.get((tool, session))
+            or str((meta.get(str(q.get("artifact_id"))) or {}).get("machine") or "")
+            or t("machine.unknown_group", lang)
+        )
         group = groups.setdefault((tool, machine, session), _SessionCount())
         group.touch(q)
         if role == "user":

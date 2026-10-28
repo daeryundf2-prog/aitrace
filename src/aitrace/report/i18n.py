@@ -344,6 +344,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "sec.counts": ("수량표", "Counts by Tool, Machine and Session"),
     "sec.user_excerpt": ("사용자 입력 발췌", "User Input Excerpts"),
     "counts.col_tool": ("도구", "Tool"),
+    "machine.unknown_group": ("기기 미상(개별 기록 파일)", "Machine unknown (separate record files)"),
     "machine.from_file": ("기기 미상(기록 파일 {name})", "Machine unknown (record file {name})"),
     "plugin.col_evidence": ("증거물", "Evidence"),
     "plugin.idle_note": (

@@ -63,6 +63,12 @@ class EvidenceFS(Protocol):
 
     def raw_ntfs(self, volume: int) -> Any | None: ...  # dissect.ntfs.NTFS or None
 
+    def streams(self, ref: EntryRef) -> list[str]: ...  # alternate data stream names, [] if unsupported
+
+    def read_stream(self, ref: EntryRef, name: str) -> bytes: ...
+
+    def xattrs(self, ref: EntryRef) -> dict[str, bytes]: ...  # extended attributes, {} if unsupported
+
 
 def user_glob(fs: EvidenceFS, user: UserProfile, rel_pattern: str) -> Iterator[EntryRef]:
     pattern = user.home.rstrip("/") + "/" + rel_pattern.lstrip("/")

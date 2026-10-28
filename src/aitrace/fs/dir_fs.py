@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import errno
+import functools
 import hashlib
 import os
 import posixpath
 import stat as stat_mod
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from fnmatch import fnmatchcase
@@ -17,6 +22,75 @@ from aitrace.core.time import from_unix
 from aitrace.fs.base import EntryRef, EntryStat, discover_users
 
 _HASH_CHUNK = 1 << 20
+_XATTR_NOFOLLOW = 0x0001  # darwin <sys/xattr.h>
+_XATTR_UNSUPPORTED = frozenset({errno.ENOTSUP, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)})
+
+
+@functools.cache
+def _darwin_libc() -> ctypes.CDLL:
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.listxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int]
+    libc.listxattr.restype = ctypes.c_ssize_t
+    libc.getxattr.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    libc.getxattr.restype = ctypes.c_ssize_t
+    return libc
+
+
+def _xattr_error(host: str) -> OSError:
+    code = ctypes.get_errno()
+    return OSError(code, os.strerror(code), host)
+
+
+def _darwin_xattrs(host: str) -> dict[str, bytes]:
+    """Extended attributes of `host` itself (symlinks are not followed); {} when the volume has none."""
+    libc = _darwin_libc()
+    path = os.fsencode(host)
+    size = libc.listxattr(path, None, 0, _XATTR_NOFOLLOW)
+    if size < 0:
+        if ctypes.get_errno() in _XATTR_UNSUPPORTED:
+            return {}
+        raise _xattr_error(host)
+    if size == 0:
+        return {}
+    names = ctypes.create_string_buffer(size)
+    size = libc.listxattr(path, names, size, _XATTR_NOFOLLOW)
+    if size < 0:
+        raise _xattr_error(host)
+    result: dict[str, bytes] = {}
+    for raw_name in names.raw[:size].split(b"\0"):
+        if not raw_name:
+            continue
+        length = libc.getxattr(path, raw_name, None, 0, 0, _XATTR_NOFOLLOW)
+        if length < 0:
+            raise _xattr_error(host)
+        value = ctypes.create_string_buffer(max(length, 1))
+        length = libc.getxattr(path, raw_name, value, length, 0, _XATTR_NOFOLLOW)
+        if length < 0:
+            raise _xattr_error(host)
+        result[os.fsdecode(raw_name)] = value.raw[:length]
+    return result
+
+
+def host_xattrs(host: str) -> dict[str, bytes]:
+    """Host extended attributes via os.listxattr (Linux) or libc (macOS); {} where unsupported."""
+    if hasattr(os, "listxattr"):
+        try:
+            names = os.listxattr(host, follow_symlinks=False)
+        except OSError as exc:
+            if exc.errno in _XATTR_UNSUPPORTED:
+                return {}
+            raise
+        return {name: os.getxattr(host, name, follow_symlinks=False) for name in names}
+    if sys.platform == "darwin":
+        return _darwin_xattrs(host)
+    return {}
 
 
 class StatLike(Protocol):
@@ -86,6 +160,15 @@ class TreeFS(ABC):
 
     def _mft_seq(self, volume: int, path: str) -> int | None:
         return None
+
+    def _streams(self, volume: int, path: str) -> list[str]:
+        return []
+
+    def _read_stream(self, volume: int, path: str, name: str) -> bytes:
+        raise FileNotFoundError(f"{path}:{name}")
+
+    def _xattrs(self, volume: int, path: str) -> dict[str, bytes]:
+        return {}
 
     @abstractmethod
     def volumes(self) -> list[VolumeInfo]: ...
@@ -163,6 +246,15 @@ class TreeFS(ABC):
         if not self._exists(ref.volume, path):
             raise FileNotFoundError(path)
         return entry_stat(self._lstat(ref.volume, path))
+
+    def streams(self, ref: EntryRef) -> list[str]:
+        return sorted(self._streams(ref.volume, self._path(ref)))
+
+    def read_stream(self, ref: EntryRef, name: str) -> bytes:
+        return self._read_stream(ref.volume, self._path(ref), name)
+
+    def xattrs(self, ref: EntryRef) -> dict[str, bytes]:
+        return self._xattrs(ref.volume, self._path(ref))
 
     def _children(self, volume: int, path: str) -> list[str]:
         if self._is_symlink(volume, path) or not self._is_dir(volume, path):
@@ -302,3 +394,29 @@ class DirFS(TreeFS):
     def raw_ntfs(self, volume: int) -> Any | None:
         self._check_volume(volume)
         return None
+
+    _WINDOWS_STREAMS = ("Zone.Identifier",)
+
+    def _streams(self, volume: int, path: str) -> list[str]:
+        """Windows hosts only, and only the known download-origin stream (no portable ADS listing API)."""
+        host = self._host(path)
+        if os.name != "nt" or host.is_symlink() or not host.is_file():
+            return []
+        found: list[str] = []
+        for name in self._WINDOWS_STREAMS:
+            try:
+                with open(f"{host}:{name}", "rb"):
+                    found.append(name)
+            except FileNotFoundError:
+                continue
+        return found
+
+    def _read_stream(self, volume: int, path: str, name: str) -> bytes:
+        host = self._host(path)
+        if os.name != "nt" or not self._contained(host):
+            raise FileNotFoundError(f"{path}:{name}")
+        with open(f"{host}:{name}", "rb") as fh:
+            return fh.read()
+
+    def _xattrs(self, volume: int, path: str) -> dict[str, bytes]:
+        return host_xattrs(str(self._host(path)))

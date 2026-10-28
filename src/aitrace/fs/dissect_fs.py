@@ -5,13 +5,16 @@ import logging
 import posixpath
 from typing import Any, BinaryIO, cast
 
+from dissect.apfs.exception import Error as ApfsError
+from dissect.ntfs.exceptions import Error as NtfsError
 from dissect.regf import RegistryHive
 from dissect.regf.exceptions import Error as RegfError
 from dissect.regf.regf import KeyNode
 from dissect.target import Target
+from dissect.target.exceptions import Error as TargetError
 from dissect.target.filesystem import Filesystem
 from dissect.target.filesystems.apfs import ApfsFilesystem, ApfsVolumeFilesystem
-from dissect.target.filesystems.ntfs import NtfsFilesystem
+from dissect.target.filesystems.ntfs import NtfsFilesystem, NtfsFilesystemEntry
 from dissect.target.helpers.fsutil import TargetPath
 
 from aitrace.core.ids import make_id
@@ -111,6 +114,38 @@ class DissectFS(TreeFS):
             return int(record.header.SequenceNumber)
         except (AttributeError, OSError):
             return None
+
+    def _streams(self, volume: int, path: str) -> list[str]:
+        """Named $DATA attributes of the MFT record (NTFS only)."""
+        if not isinstance(self._filesystem(volume), NtfsFilesystem):
+            return []
+        try:
+            record = self._tp(volume, path).get().entry
+            return sorted({attr.name for attr in record.attributes.DATA if attr.name})
+        except (NtfsError, TargetError) as exc:
+            raise OSError(f"cannot list streams of {path}: {exc!r}") from exc
+
+    def _read_stream(self, volume: int, path: str, name: str) -> bytes:
+        if not isinstance(self._filesystem(volume), NtfsFilesystem):
+            raise FileNotFoundError(f"{path}:{name}")
+        try:
+            entry = cast(NtfsFilesystemEntry, self._tp(volume, path).get())
+            with entry.open(name) as fh:
+                return fh.read()
+        except (NtfsError, TargetError) as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            raise OSError(f"cannot read stream {path}:{name}: {exc!r}") from exc
+
+    def _xattrs(self, volume: int, path: str) -> dict[str, bytes]:
+        """APFS inode xattrs (symlinks not followed); {} for other filesystems."""
+        if not isinstance(self._filesystem(volume), ApfsVolumeFilesystem):
+            return {}
+        try:
+            inode = self._tp(volume, path).get().entry
+            return {name: xattr.open().read() for name, xattr in inode.xattr.items()}
+        except (ApfsError, TargetError) as exc:
+            raise OSError(f"cannot read xattrs of {path}: {exc!r}") from exc
 
     def volumes(self) -> list[VolumeInfo]:
         if self._volumes is None:

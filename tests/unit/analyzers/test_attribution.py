@@ -353,3 +353,19 @@ def test_malformed_artifacts_are_skipped_and_reported(store: CaseStore) -> None:
     assert coverage[0].severity is Severity.LOW
     assert coverage[0].title == "attribution: skipped 2 malformed artifacts"
     assert coverage[0].data["artifact_ids"] == ["bad-missing", "bad-type"]
+
+
+def test_download_origin_with_ai_service_adds_download_signal(store: CaseStore) -> None:
+    path = "/Users/kim/Downloads/report.docx"
+    origin = {"url": "https://files.oaiusercontent.com/x", "origin_url": "https://chatgpt.com/c/1", "agent": "Safari"}
+    store.add(
+        [
+            _art("do1", ArtifactKind.DOWNLOAD_ORIGIN, {**origin, "target_path": path, "ai_service": "ChatGPT"}),
+            _art("do2", ArtifactKind.DOWNLOAD_ORIGIN, {**origin, "target_path": "/Users/kim/Downloads/other.zip"}),
+        ]
+    )
+    attrs, _ = _run(store)
+    assert list(attrs) == [path]
+    assert [s.type for s in attrs[path].signals] == [SignalType.AI_DOWNLOAD_ORIGIN]
+    assert attrs[path].signals[0].artifact_ids == ("do1",)
+    assert attrs[path].confidence == pytest.approx(0.75)

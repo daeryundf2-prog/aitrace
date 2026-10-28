@@ -39,8 +39,13 @@ class MemoryFS:
         volume_os: OsFamily = OsFamily.UNKNOWN,
         mtimes: dict[str, datetime] | None = None,
         evidence_id: str = "mem",
+        *,
+        streams: dict[str, dict[str, bytes]] | None = None,
+        xattrs: dict[str, dict[str, bytes]] | None = None,
     ) -> None:
         self.evidence_id = evidence_id
+        self._streams = {_clean(p): dict(named) for p, named in (streams or {}).items()}
+        self._xattrs = {_clean(p): dict(named) for p, named in (xattrs or {}).items()}
         self._volume_os = volume_os
         self._files: dict[str, bytes] = {_clean(p): data for p, data in files.items()}
         self._mtimes: dict[str, datetime] = {_clean(p): ts for p, ts in (mtimes or {}).items()}
@@ -165,3 +170,16 @@ class MemoryFS:
     def raw_ntfs(self, volume: int) -> Any | None:
         self._check_volume(volume)
         return None
+
+    def streams(self, ref: EntryRef) -> list[str]:
+        return sorted(self._streams.get(self._path(ref), {}))
+
+    def read_stream(self, ref: EntryRef, name: str) -> bytes:
+        path = self._path(ref)
+        try:
+            return self._streams[path][name]
+        except KeyError:
+            raise FileNotFoundError(f"{path}:{name}") from None
+
+    def xattrs(self, ref: EntryRef) -> dict[str, bytes]:
+        return dict(self._xattrs.get(self._path(ref), {}))

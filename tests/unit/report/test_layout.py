@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 from aitrace.report.layout import Block, Document, Heading, Para, Table, build_document, chapter_outline
+from aitrace.report.model import GENERATED_ROW_CAP
 
 _SPEC = importlib.util.spec_from_file_location("report_sample", Path(__file__).with_name("sample.py"))
 assert _SPEC is not None and _SPEC.loader is not None
@@ -162,3 +163,81 @@ def test_banned_scanner_detects_the_listed_patterns() -> None:
     for bad in ("핵심 결과", "전수 조사", "좋음!", "①", "\u2605", "\U0001f600", "매우 높음", "File created: /a", "Amcache: x recorded"):
         assert sample.find_banned(bad), bad
     assert sample.find_banned("해시 검증 결과는 일치함") == []
+
+
+def _generated_row(i: int) -> dict[str, object]:
+    return {
+        "attribution_id": f"at{i}",
+        "subject": f"/c/cron/output/ja/out-{i:04d}.md",
+        "verdict": "ai_generated",
+        "verdict_label": "AI 생성",
+        "confidence": 0.9,
+        "confidence_display": "0.90 (강함)",
+        "signals_summary": "",
+        "origin": [f"origin {i}"],
+        "limitations_display": ["공통 한계"],
+        "output_kind": "cron_output",
+        "tool": "Hermes Agent",
+        "ts_utc": f"2026-10-01T00:{i // 60:02d}:{i % 60:02d}Z",
+        "ts_local": f"2026-10-01 09:{i // 60:02d}:{i % 60:02d} (+09:00)",
+        "basis": f"/c/cron/output/ja/out-{i:04d}.md (file)",
+    }
+
+
+def test_generated_chapter_caps_rows_to_most_recent_and_counts_every_job() -> None:
+    model = sample.make_model("ko")
+    total = GENERATED_ROW_CAP + 30
+    model.generated_files = [_generated_row(i) for i in range(total)]
+    job = {"job_id": "ja", "job_name": "daily", "mode": "agent", "first_local": "a", "last_local": "b"}
+    counts = {"outputs": 3, "agent_outputs": 2, "script_outputs": 0, "silent": 1, "failed": 0, "other": 0}
+    script = {"job_id": "jb", "job_name": "probe", "mode": "script", "first_local": "a", "last_local": "a"}
+    script_counts = {"outputs": 4, "agent_outputs": 0, "script_outputs": 3, "silent": 1, "failed": 1, "other": 0}
+    model.generated_jobs = [job | counts, script | script_counts]
+    blocks = _between(build_document(model), 1, "생성물")
+    tables = [b for b in blocks if isinstance(b, Table)]
+    jobs = next(tb for tb in tables if tb.headers[0] == "작업명 (ID)")
+    assert [row[0] for row in jobs.rows] == ["daily (ja)", "probe (jb)", "합계"]
+    assert jobs.rows[-1][2:8] == ("7", "2", "3", "2", "0", "1")
+    listing = next(tb for tb in tables if tb.headers[0] == "시각(현지)")
+    assert len(listing.rows) == GENERATED_ROW_CAP
+    assert listing.rows[0][0] == _generated_row(30)["ts_local"]
+    assert listing.rows[-1][0] == _generated_row(total - 1)["ts_local"]
+    note = " ".join(_paragraphs(blocks))
+    assert "report/prompts.html" in note and "report/csv/attributions.csv" in note
+    assert "공통 한계" in note
+
+
+def test_instruction_section_counts_skills_and_lists_persona_rows() -> None:
+    model = sample.make_model("ko")
+    base = dict(model.instructions[0])
+    skills = [
+        dict(base, artifact_id=f"sk{i}", source=f"/02_skills/skills/s{i}/SKILL.md", text=f"skill {i}")
+        for i in range(3)
+    ]
+    persona = dict(base, artifact_id="soul", source="/01/hermes_dot/SOUL.md", text="persona text")
+    model.instructions = [*skills, persona]
+    model.query_meta.update({f"sk{i}": {"source_kind": "skill"} for i in range(3)})
+    model.query_meta["soul"] = {"source_kind": "persona"}
+    blocks = _between(build_document(model), 2, "시스템 지시문·페르소나·규칙")
+    tables = [b for b in blocks if isinstance(b, Table)]
+    counts = next(tb for tb in tables if "상위 디렉터리" in tb.headers)
+    assert [(row[1], row[2], row[3]) for row in counts.rows] == [("스킬(SKILL.md)", "/02_skills/skills", "3")]
+    listed = [row[5] for tb in tables if "상위 디렉터리" not in tb.headers for row in tb.rows]
+    assert "persona text" in listed and not any(text.startswith("skill ") for text in listed)
+    assert any("report/prompts.html" in p for p in _paragraphs(blocks))
+
+
+
+def test_dense_instruction_table_prints_repeated_tool_and_path_as_ditto() -> None:
+    model = sample.make_model("ko")
+    base = dict(model.instructions[0])
+    model.instructions = [
+        dict(base, artifact_id=f"sp{i}", source="/03/system_prompts.md", text=f"prompt {i}") for i in range(120)
+    ]
+    model.query_meta.update({f"sp{i}": {"source_kind": "export_system_prompt"} for i in range(120)})
+    blocks = _between(build_document(model), 2, "시스템 지시문·페르소나·규칙")
+    table = next(b for b in blocks if isinstance(b, Table) and len(b.rows) >= 120)
+    paths = [row[1] for row in table.rows]
+    assert paths.count("/03/system_prompts.md") == 1 and paths.count("\u3003") == 119
+    assert sum(row[0] == "\u3003" for row in table.rows) >= 118
+    assert any("\u3003" in p for p in _paragraphs(blocks))

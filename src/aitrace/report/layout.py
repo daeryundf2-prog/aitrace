@@ -11,10 +11,14 @@ from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.report.i18n import t
 from aitrace.report.model import (
     AI_QUERIES_CSV_PATH,
+    ATTRIBUTIONS_CSV_PATH,
     COLUMNS,
     EXCERPT_CHARS,
     EXCERPT_DENSE_CHARS,
     EXCERPT_DENSE_ROWS,
+    GENERATED_KV_ROWS,
+    GENERATED_ROW_CAP,
+    INSTRUCTION_ROW_KINDS,
     MACHINE_ROW_CAP,
     PROMPT_ROW_CAP,
     PROMPTS_VOLUME_PATH,
@@ -36,10 +40,16 @@ KO_LETTERS = "가나다라마바사아자차카타파하"
 EN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 MAX_TOOL_NAMES = 8
 CHANNEL_ARROW = " \u2192 "
+DITTO = "\u3003"  # ditto mark: same as the cell above
+GENERATED_PATH_CHARS = 40
 
-WRITE_NAME = re.compile(r"write|edit|patch|create|delete|remove|unlink|rename|move|save|append|truncate|mkdir|\brm\b", re.IGNORECASE)
+WRITE_NAME = re.compile(
+    r"write|edit|patch|create|delete|remove|unlink|rename|move|save|append|truncate|mkdir|\brm\b",
+    re.IGNORECASE,
+)
 TRANSFER_COMMAND = re.compile(
-    r"\b(scp|sftp|rsync|rclone|curl|wget|ssh|ftp|ncat|socat|nc|aws\s+s3|gsutil|git\s+push|rm|del)\b", re.IGNORECASE
+    r"\b(scp|sftp|rsync|rclone|curl|wget|ssh|ftp|ncat|socat|nc|aws\s+s3|gsutil|git\s+push|rm|del)\b",
+    re.IGNORECASE,
 )
 LIMIT_SECTIONS: tuple[str, ...] = ("plugins", "warnings", "undecoded", "findings", "caveats")
 LANDSCAPE_CHAPTERS: frozenset[str] = frozenset({"timeline", "exports"})
@@ -254,7 +264,13 @@ def _volumes(ev: Mapping[str, Any]) -> str:
 
 
 def _os_names(ev: Mapping[str, Any]) -> str:
-    return ", ".join(dict.fromkeys(str(v.get("os_family")) for v in ev.get("volumes") or [] if v.get("os_family")))
+    return ", ".join(
+        dict.fromkeys(
+            str(v.get("os_family"))
+            for v in ev.get("volumes") or []
+            if v.get("os_family") not in (None, "", "unknown")
+        )
+    )
 
 
 def _hash_rows(ev: Mapping[str, Any], lang: str) -> list[tuple[str, str, str]]:
@@ -283,7 +299,10 @@ def _overview(b: _Builder, model: ReportModel) -> None:
         (t("label.examiner", lang), str(case.get("examiner") or "")),
         (t("label.timezone", lang), str(case.get("timezone") or "")),
         (t("subject.target", lang), "\n".join(_basename(ev.get("path")) for ev in model.evidence)),
-        (t("subject.os", lang), ", ".join(filter(None, (_os_names(ev) for ev in model.evidence)))),
+        (
+            t("subject.os", lang),
+            ", ".join(filter(None, (_os_names(ev) for ev in model.evidence))) or t("subject.os_none", lang),
+        ),
         (t("subject.volumes", lang), "\n".join(filter(None, (_volumes(ev) for ev in model.evidence)))),
         (t("subject.users", lang), ", ".join(filter(None, (_users(ev) for ev in model.evidence)))),
         (t("label.notes", lang), str(case.get("notes") or "")),
@@ -365,13 +384,18 @@ def _facts(model: ReportModel) -> _Facts:
     roles = [str(q.get("role")) for q in model.ai_queries]
     stamps = [str(r["ts_local"]) for r in model.timeline if r.get("ts_local")]
     channels = dict.fromkeys(
-        _channel(r["display_channel"], model.lang).split(",", 1)[0] for r in model.exfil if r.get("display_channel")
+        _channel(r["display_channel"], model.lang).split(",", 1)[0]
+        for r in model.exfil
+        if r.get("display_channel")
     )
     verdicts = [str(g["verdict"]) for g in model.generated_files]
     recycled = sum(
         1
         for row in model.file_lifecycle
-        if any(step.get("event") in ("deleted", "recycled") for step in row.get("data", {}).get("lifecycle") or [])
+        if any(
+            step.get("event") in ("deleted", "recycled")
+            for step in row.get("data", {}).get("lifecycle") or []
+        )
     )
     return _Facts(
         evidence_n=len(model.evidence),
@@ -387,7 +411,9 @@ def _facts(model: ReportModel) -> _Facts:
         timeline_n=len(model.timeline),
         first=stamps[0] if stamps else "",
         last=stamps[-1] if stamps else "",
-        ai_events=sum(1 for r in model.timeline if r.get("actor") == "ai" or r.get("category") == "ai_activity"),
+        ai_events=sum(
+            1 for r in model.timeline if r.get("actor") == "ai" or r.get("category") == "ai_activity"
+        ),
         changes=len(model.file_lifecycle),
         deleted=recycled,
         channels=list(channels),
@@ -407,7 +433,14 @@ def _statements(model: ReportModel) -> list[str]:
     out: list[str] = []
     if f.evidence_n:
         out.append(
-            t("stmt.evidence", lang, n=f.evidence_n, match=f.match, mismatch=f.mismatch, unverified=f.unverified)
+            t(
+                "stmt.evidence",
+                lang,
+                n=f.evidence_n,
+                match=f.match,
+                mismatch=f.mismatch,
+                unverified=f.unverified,
+            )
             + _cite(lang, _section_ref(lang, 1, "2."))
         )
     else:
@@ -520,6 +553,22 @@ def _excerpt(value: Any, limit: int = EXCERPT_CHARS) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "\u2026"
 
 
+def _ditto(rows: Sequence[Sequence[str]], cols: Sequence[int]) -> list[tuple[str, ...]]:
+    """In dense tables a cell equal to the one above in a repeated column is printed as a ditto mark."""
+    if len(rows) <= EXCERPT_DENSE_ROWS:
+        return [tuple(row) for row in rows]
+    out: list[tuple[str, ...]] = []
+    for i, row in enumerate(rows):
+        prev = rows[i - 1] if i else None
+        out.append(
+            tuple(
+                DITTO if prev is not None and c in cols and cell and cell == prev[c] else cell
+                for c, cell in enumerate(row)
+            )
+        )
+    return out
+
+
 def _excerpt_chars(rows: int) -> int:
     return EXCERPT_CHARS if rows <= EXCERPT_DENSE_ROWS else EXCERPT_DENSE_CHARS
 
@@ -602,7 +651,9 @@ def _counts_section(b: _Builder, model: ReportModel) -> None:
         b.para(t("summary.none", lang))
         return
     b.para(t("counts.note", lang, n=len(groups), volume=PROMPTS_VOLUME_PATH))
-    ordered = sorted(groups.items(), key=lambda item: (item[0][0], item[0][1], item[1].first, str(item[0][2])))
+    ordered = sorted(
+        groups.items(), key=lambda item: (item[0][0], item[0][1], item[1].first, str(item[0][2]))
+    )
     if len(ordered) > SESSION_ROW_CAP:
         _machine_totals(b, ordered)
         busiest = sorted(ordered, key=lambda item: -(item[1].user + item[1].ai + item[1].calls))
@@ -645,7 +696,9 @@ def _counts_section(b: _Builder, model: ReportModel) -> None:
     )
 
 
-def _machine_totals(b: _Builder, ordered: Sequence[tuple[tuple[str, str, str | None], _SessionCount]]) -> None:
+def _machine_totals(
+    b: _Builder, ordered: Sequence[tuple[tuple[str, str, str | None], _SessionCount]]
+) -> None:
     lang = b.lang
     totals: dict[tuple[str, str], _SessionCount] = {}
     sessions: dict[tuple[str, str], int] = {}
@@ -727,7 +780,13 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
         extra = meta.get(str(row.get("artifact_id"))) or {}
         slot = distinct.get(key)
         if slot is None:
-            slot = distinct[key] = {"row": row, "text": text, "first": (True, ""), "first_local": "", "last_local": ""}
+            slot = distinct[key] = {
+                "row": row,
+                "text": text,
+                "first": (True, ""),
+                "first_local": "",
+                "last_local": "",
+            }
         stamp = _stamp(row)
         if not stamp[0] and (slot["first"][0] or stamp < slot["first"]):
             slot["first"], slot["first_local"] = stamp, _text(row.get("ts_local"))
@@ -738,7 +797,14 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
         distinct.items(),
         key=lambda item: (_text(item[1]["row"].get("tool")), item[0][0], item[1]["first"]),
     )
+    counted = [item for item in ordered if _counted_instruction(item[1]["row"], meta)]
+    ordered = [item for item in ordered if not _counted_instruction(item[1]["row"], meta)]
     chars = _excerpt_chars(len(ordered))
+    if counted:
+        b.para(t("instr.note_split", lang, n=len(ordered), m=len(counted), volume=PROMPTS_VOLUME_PATH))
+        _instruction_counts(b, counted, meta)
+    if not ordered:
+        return
     b.para(t("instr.note", lang, n=len(ordered), chars=chars, volume=PROMPTS_VOLUME_PATH))
     rows = []
     for (source, sha), slot in ordered:
@@ -757,6 +823,8 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
                 _excerpt(slot["text"], chars),
             )
         )
+    if len(rows) > EXCERPT_DENSE_ROWS:
+        b.para(t("table.ditto_note", lang, mark=DITTO))
     b.table(
         (
             t("counts.col_tool", lang) + " / " + t("instr.col_kind", lang),
@@ -766,10 +834,69 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
             t("instr.col_sha", lang),
             t("instr.col_excerpt", lang, n=chars),
         ),
-        rows,
-        (3, 5, 2, 4, 3, 9),
+        _ditto(rows, (0, 1)),
+        (2, 3, 2, 4, 3, 12) if len(rows) > EXCERPT_DENSE_ROWS else (3, 5, 2, 4, 3, 9),
         raw=(5,),
         compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def _instruction_kind(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]) -> str | None:
+    kind = (meta.get(str(row.get("artifact_id"))) or {}).get("source_kind")
+    return str(kind) if kind else None
+
+
+def _counted_instruction(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]) -> bool:
+    kind = _instruction_kind(row, meta)
+    return kind is not None and kind not in INSTRUCTION_ROW_KINDS
+
+
+def _top_dir(source: str) -> str:
+    parts = [p for p in source.split("/") if p]
+    return "/" + "/".join(parts[: min(2, len(parts) - 1)]) if len(parts) > 1 else "/"
+
+
+def _instruction_counts(
+    b: _Builder,
+    counted: Sequence[tuple[tuple[str, str], dict[str, Any]]],
+    meta: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Skills, workspace instructions and templates as one count row per (tool, kind, top directory)."""
+    lang = b.lang
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for (source, _), slot in counted:
+        row = slot["row"]
+        kind = _instruction_kind(row, meta) or ""
+        key = (tool_label(row.get("tool"), lang), kind, _top_dir(source))
+        group = groups.setdefault(key, {"n": 0, "bytes": 0, "first": "", "last": ""})
+        group["n"] += 1
+        group["bytes"] += len(slot["text"].encode("utf-8", "replace"))
+        first, last = slot["first_local"], slot["last_local"]
+        if first and (not group["first"] or first < group["first"]):
+            group["first"] = first
+        if last and last > group["last"]:
+            group["last"] = last
+    b.table(
+        (
+            t("counts.col_tool", lang),
+            t("instr.col_kind", lang),
+            t("instr.col_dir", lang),
+            t("instr.col_count", lang),
+            t("instr.col_total", lang),
+            t("instr.col_seen", lang),
+        ),
+        [
+            (
+                tool,
+                _lookup(f"instr.kind.{kind}", lang, kind),
+                top,
+                f"{g['n']:,}",
+                f"{g['bytes']:,}",
+                _seen(g["first"], g["last"]),
+            )
+            for (tool, kind, top), g in sorted(groups.items())
+        ],
+        (3, 4, 6, 2, 3, 5),
     )
 
 
@@ -786,11 +913,15 @@ def _where(row: Mapping[str, Any], model: ReportModel, machines: Mapping[tuple[s
 def _machines(model: ReportModel) -> dict[tuple[str, str | None], str]:
     out: dict[tuple[str, str | None], str] = {}
     for q in model.ai_queries:
-        out.setdefault((tool_label(q.get("tool"), model.lang), q.get("session")), machine_label(q, model.query_meta))
+        out.setdefault(
+            (tool_label(q.get("tool"), model.lang), q.get("session")), machine_label(q, model.query_meta)
+        )
     return out
 
 
-def _user_excerpts(model: ReportModel, users: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[Mapping[str, Any], str]], int]:
+def _user_excerpts(
+    model: ReportModel, users: Sequence[Mapping[str, Any]]
+) -> tuple[list[tuple[Mapping[str, Any], str]], int]:
     """Rows to show plus the number of flagged prompts: everything when small, else flagged + session edges."""
     lang = model.lang
     meta = model.query_meta
@@ -816,11 +947,17 @@ def _user_excerpts(model: ReportModel, users: Sequence[Mapping[str, Any]]) -> tu
             if len(chosen) < PROMPT_ROW_CAP:
                 chosen.setdefault(str(u.get("artifact_id")), u)
     shown = sorted(chosen.values(), key=_stamp)
-    return [(u, _flag_label(u, meta, lang, edge_label.get(str(u.get("artifact_id")), ()))) for u in shown], len(flagged)
+    return [
+        (u, _flag_label(u, meta, lang, edge_label.get(str(u.get("artifact_id")), ()))) for u in shown
+    ], len(flagged)
 
 
-def _flag_label(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]], lang: str, edges: Sequence[str]) -> str:
-    keys = [f"flag.{f}" for f in (meta.get(str(row.get("artifact_id"))) or {}).get("flags") or ()] + list(edges)
+def _flag_label(
+    row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]], lang: str, edges: Sequence[str]
+) -> str:
+    keys = [f"flag.{f}" for f in (meta.get(str(row.get("artifact_id"))) or {}).get("flags") or ()] + list(
+        edges
+    )
     return ", ".join(t(k, lang) for k in keys) or t("flag.all", lang)
 
 
@@ -849,6 +986,8 @@ def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, 
             )
         )
     machines = _machines(model)
+    if len(selected) > EXCERPT_DENSE_ROWS:
+        b.para(t("table.ditto_note", lang, mark=DITTO))
     b.table(
         (
             t("prompts.col_time", lang),
@@ -857,17 +996,20 @@ def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, 
             t("prompts.col_text", lang),
             t("prompts.col_source", lang),
         ),
-        [
-            (
-                _text(u.get("ts_local")) or "-",
-                _where(u, model, machines),
-                flag,
-                _excerpt(u.get("text"), chars),
-                _text(u.get("source")),
-            )
-            for u, flag in selected
-        ],
-        (3, 4, 2, 9, 4),
+        _ditto(
+            [
+                (
+                    _text(u.get("ts_local")) or "-",
+                    _where(u, model, machines),
+                    flag,
+                    _excerpt(u.get("text"), chars),
+                    _text(u.get("source")),
+                )
+                for u, flag in selected
+            ],
+            (1, 4),
+        ),
+        (3, 3, 2, 12, 3) if len(selected) > EXCERPT_DENSE_ROWS else (3, 4, 2, 9, 4),
         raw=(3,),
         compact=len(selected) > EXCERPT_DENSE_ROWS,
     )
@@ -948,11 +1090,19 @@ def _prompts(b: _Builder, model: ReportModel) -> None:
 def _generated(b: _Builder, model: ReportModel) -> None:
     lang = b.lang
     b.chapter(t("chapter.generated", lang))
-    if not model.generated_files:
+    files = model.generated_files
+    if not files and not model.generated_jobs:
         b.para(t("stmt.generated_none", lang))
         return
-    b.para(t("generated.intro", lang, n=len(model.generated_files)))
-    for row in model.generated_files:
+    b.para(t("generated.intro", lang, n=len(files)) if files else t("stmt.generated_none", lang))
+    if model.generated_jobs:
+        _generated_jobs(b, model)
+        if files:
+            b.section(t("generated.list_title", lang))
+    if len(files) > GENERATED_KV_ROWS:
+        _generated_table(b, model)
+        return
+    for row in files:
         b.sub(_text(row.get("subject")))
         b.kv(
             [
@@ -965,12 +1115,122 @@ def _generated(b: _Builder, model: ReportModel) -> None:
         )
 
 
+def _generated_jobs(b: _Builder, model: ReportModel) -> None:
+    lang = b.lang
+    jobs = model.generated_jobs
+    keys = ("outputs", "agent_outputs", "script_outputs", "silent", "other", "failed")
+    total = {k: sum(int(j.get(k) or 0) for j in jobs) for k in keys}
+    b.section(t("generated.jobs_title", lang))
+    b.para(
+        t(
+            "generated.jobs_note",
+            lang,
+            n=len(jobs),
+            total=total["outputs"],
+            agent=total["agent_outputs"],
+            script=total["script_outputs"],
+            silent=total["silent"],
+            other=total["other"],
+        )
+    )
+    rows = [
+        (
+            f"{_text(j.get('job_name')) or '-'} ({_text(j.get('job_id'))})",
+            _lookup(f"generated.mode.{j.get('mode')}", lang, _text(j.get("mode"))),
+            *(f"{int(j.get(k) or 0):,}" for k in keys),
+            _seen(_text(j.get("first_local"))[:10], _text(j.get("last_local"))[:10]),
+        )
+        for j in jobs
+    ]
+    rows.append((t("generated.jobs_total", lang), "", *(f"{total[k]:,}" for k in keys), ""))
+    b.table(
+        (
+            t("generated.col_job", lang),
+            t("generated.col_mode", lang),
+            t("generated.col_outputs", lang),
+            t("generated.col_agent", lang),
+            t("generated.col_script", lang),
+            t("generated.col_silent", lang),
+            t("generated.col_other", lang),
+            t("generated.col_failed", lang),
+            t("generated.col_period", lang),
+        ),
+        rows,
+        (6, 2, 2, 2, 2, 2, 2, 2, 4),
+        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def generated_shown(files: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Rows chapter 4 lists: every item without a record time, then the most recent, in time order."""
+    untimed = [r for r in files if not r.get("ts_utc")]
+    timed = sorted((r for r in files if r.get("ts_utc")), key=lambda r: str(r["ts_utc"]), reverse=True)
+    chosen = [*untimed, *timed][:GENERATED_ROW_CAP]
+    return sorted(
+        chosen, key=lambda r: (r.get("ts_utc") is None, str(r.get("ts_utc") or ""), str(r["subject"]))
+    )
+
+
+def _generated_table(b: _Builder, model: ReportModel) -> None:
+    lang = b.lang
+    files = model.generated_files
+    shown = generated_shown(files)
+    if len(shown) < len(files):
+        b.para(
+            t(
+                "generated.note_cap",
+                lang,
+                total=len(files),
+                shown=len(shown),
+                cap=GENERATED_ROW_CAP,
+                volume=PROMPTS_VOLUME_PATH,
+                csv=ATTRIBUTIONS_CSV_PATH,
+            )
+        )
+    else:
+        b.para(t("generated.note_all", lang, n=len(files)))
+    b.table(
+        (
+            t("generated.col_time", lang),
+            t("generated.col_subject", lang),
+            t("generated.origin", lang),
+            t("generated.col_verdict", lang),
+            t("generated.col_basis", lang),
+        ),
+        [
+            (
+                _text(r.get("ts_local")) or "-",
+                _tail(_text(r.get("subject")), GENERATED_PATH_CHARS),
+                _excerpt(_text(r.get("origin")) or t("generated.no_origin", lang), EXCERPT_DENSE_CHARS),
+                f"{_text(r.get('verdict_label'))}\n{_text(r.get('confidence_display'))}",
+                _tail(_text(r.get("basis")) or "-", GENERATED_PATH_CHARS),
+            )
+            for r in shown
+        ],
+        (3, 5, 9, 3, 5),
+        compact=len(shown) > EXCERPT_DENSE_ROWS,
+    )
+    limits = _dedupe_text(item for r in shown for item in r.get("limitations_display") or ())
+    if limits:
+        b.para(t("generated.common_limits", lang, items=" / ".join(limits)))
+
+
+def _dedupe_text(items: Any) -> list[str]:
+    return list(dict.fromkeys(str(i) for i in items))
+
+
 def _timeline_cell(row: Mapping[str, Any], key: str, compact: bool) -> str:
     value = _text(row.get(key))
-    if not compact or row.get("collapsed"):
+    if row.get("collapsed"):
         return value
     if key == "summary":
-        return value if len(value) <= TIMELINE_SUMMARY_CHARS else value[:TIMELINE_SUMMARY_CHARS].rstrip() + "\u2026"
+        return (
+            value
+            if len(value) <= TIMELINE_SUMMARY_CHARS
+            else value[:TIMELINE_SUMMARY_CHARS].rstrip() + "\u2026"
+        )
+    if not compact:
+        return value
     if key == "source_path":
         return _tail(value, TIMELINE_SOURCE_CHARS)
     return value
@@ -1041,7 +1301,10 @@ def _spec_table(b: _Builder, spec_key: str, rows: Sequence[Mapping[str, Any]]) -
     b.table(
         [t(label, lang) for _, label, _ in spec],
         [
-            [(_channel(r.get(key), lang) if key == "display_channel" else _text(r.get(key))) or "-" for key, _, _ in spec]
+            [
+                (_channel(r.get(key), lang) if key == "display_channel" else _text(r.get(key))) or "-"
+                for key, _, _ in spec
+            ]
             for r in rows
         ],
         [w for _, _, w in spec],
@@ -1054,7 +1317,11 @@ def _status(value: Any, lang: str) -> str:
 
 
 def _plain_table(
-    b: _Builder, columns: Sequence[tuple[str, str, int]], rows: Sequence[Mapping[str, Any]], *, status: str = ""
+    b: _Builder,
+    columns: Sequence[tuple[str, str, int]],
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    status: str = "",
 ) -> None:
     lang = b.lang
     if not rows:
@@ -1062,7 +1329,10 @@ def _plain_table(
         return
     b.table(
         [t(label, lang) for _, label, _ in columns],
-        [[_status(r.get(key), lang) if key == status else _text(r.get(key)) for key, _, _ in columns] for r in rows],
+        [
+            [_status(r.get(key), lang) if key == status else _text(r.get(key)) for key, _, _ in columns]
+            for r in rows
+        ],
         [w for _, _, w in columns],
     )
 
@@ -1119,7 +1389,11 @@ def _limits(b: _Builder, model: ReportModel) -> None:
     ]
     _plain_table(
         b,
-        (("title", "limits.col_title", 3), ("narrative", "limits.col_narrative", 5), ("limits", "limits.col_limits", 4)),
+        (
+            ("title", "limits.col_title", 3),
+            ("narrative", "limits.col_narrative", 5),
+            ("limits", "limits.col_limits", 4),
+        ),
         findings,
     )
     b.section(t("sec.caveats", lang))
@@ -1175,7 +1449,12 @@ def _annexes(b: _Builder, model: ReportModel) -> None:
     b.annex(t("annex.signature", lang))
     sig = model.signature
     b.table(
-        (t("sign.author", lang), t("sign.organisation", lang), t("sign.signature", lang), t("sign.date", lang)),
+        (
+            t("sign.author", lang),
+            t("sign.organisation", lang),
+            t("sign.signature", lang),
+            t("sign.date", lang),
+        ),
         [(_text(sig.get("examiner")), _text(sig.get("organisation")), "\n\n", "\n\n")],
         (3, 3, 3, 2),
     )

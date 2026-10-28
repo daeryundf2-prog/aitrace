@@ -72,7 +72,7 @@ def _entry(row: Mapping[str, Any]) -> str:
     return f'<div class="entry"><p class="meta">{stamp} \u00b7 {role} \u00b7 {source}</p><pre>{text}</pre></div>\n'
 
 
-def _toc(tree: dict[str, dict[str, _Machine]], lang: str) -> Iterator[str]:
+def _toc(tree: dict[str, dict[str, _Machine]], lang: str, generated: bool = False) -> Iterator[str]:
     yield f'<nav class="toc" aria-label="{escape(t("vol.toc", lang))}">\n<h2>{escape(t("vol.toc", lang))}</h2>\n'
     for tool, machines in tree.items():
         yield f'<p class="l1"><a href="#{machines_anchor(tool, tree)}">{escape(tool)}</a></p>\n'
@@ -87,6 +87,8 @@ def _toc(tree: dict[str, dict[str, _Machine]], lang: str) -> Iterator[str]:
                     f'<p class="l3"><a href="#{session.anchor}">{escape(session.label)}</a> '
                     f"({escape(t('vol.count', lang, n=len(session.rows)))})</p>\n"
                 )
+    if generated:
+        yield f'<p class="l1"><a href="#{GENERATED_ANCHOR}">{escape(t("vol.generated", lang))}</a></p>\n'
     yield "</nav>\n"
 
 
@@ -121,6 +123,40 @@ def _body(tree: dict[str, dict[str, _Machine]], lang: str) -> Iterator[str]:
         yield "</section>\n"
 
 
+GENERATED_ANCHOR = "generated"
+
+
+def _generated(model: ReportModel, lang: str) -> Iterator[str]:
+    """Every item chapter 4 judged, in time order (items without a record time last)."""
+    rows = sorted(
+        model.generated_files,
+        key=lambda r: (r.get("ts_utc") is None, str(r.get("ts_utc") or ""), str(r.get("subject"))),
+    )
+    yield f'<section class="tool">\n<h2 id="{GENERATED_ANCHOR}">{escape(t("vol.generated", lang))}</h2>\n'
+    yield f"<p>{escape(t('vol.generated_intro', lang, n=len(rows)))}</p>\n"
+    for row in rows:
+        meta = " \u00b7 ".join(
+            str(v)
+            for v in (
+                row.get("ts_local") or "-",
+                row.get("verdict_label"),
+                row.get("confidence_display"),
+                row.get("basis") or row.get("subject"),
+            )
+            if v
+        )
+        lines = [
+            str(row.get("subject") or ""),
+            *(str(o) for o in row.get("origin") or ()),
+            *(str(x) for x in row.get("limitations_display") or ()),
+        ]
+        yield (
+            f'<div class="entry"><p class="meta">{escape(meta)}</p>'
+            f"<pre>{escape(chr(10).join(lines))}</pre></div>\n"
+        )
+    yield "</section>\n"
+
+
 def render_prompts_volume(model: ReportModel, out_path: Path | str) -> Path:
     """Write the companion volume `prompts.html` and return its path."""
     lang = str(model.case.get("lang") or DEFAULT_LANG)
@@ -148,10 +184,12 @@ def render_prompts_volume(model: ReportModel, out_path: Path | str) -> Path:
             f"<p>{escape(t('vol.intro', lang, m=messages, i=len(model.instructions)))}</p>\n"
             f'<p class="notice">{escape(t("cover.notice", lang))}</p>\n</section>\n'
         )
-        if not tree:
+        if not tree and not model.generated_files:
             fh.write(f"<p>{escape(t('vol.none', lang))}</p>\n")
         else:
-            fh.writelines(_toc(tree, lang))
+            fh.writelines(_toc(tree, lang, bool(model.generated_files)))
             fh.writelines(_body(tree, lang))
+            if model.generated_files:
+                fh.writelines(_generated(model, lang))
         fh.write("</div>\n</body>\n</html>\n")
     return path

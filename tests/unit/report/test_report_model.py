@@ -297,7 +297,7 @@ def _build(store: CaseStore, run_info: dict[str, object] | None = None, lang: st
 
 def test_section_keys_order_matches_appendix_e(full_store: CaseStore) -> None:
     model = _build(full_store)
-    extras = ["tool_calls", "instructions", "generated_files", "chapters"]
+    extras = ["tool_calls", "instructions", "generated_files", "generated_jobs", "chapters"]
     assert list(SECTION_KEYS) == APPENDIX_E_ORDER
     assert list(model.to_dict()) == [*APPENDIX_E_ORDER, *extras]
     assert list(json.loads(model.to_json())) == [*APPENDIX_E_ORDER, *extras]

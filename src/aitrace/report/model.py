@@ -12,6 +12,7 @@ from importlib import metadata
 from pathlib import PurePath
 from typing import Any, NamedTuple
 
+from aitrace.analyzers.attribution import OUTPUT_CALLS
 from aitrace.core import catalog
 from aitrace.core.kinds import (
     Actor,
@@ -54,7 +55,7 @@ SECTION_KEYS: tuple[str, ...] = (
 )
 
 # Display-only sections added for the chapter layout; they follow SECTION_KEYS in report.json.
-EXTRA_KEYS: tuple[str, ...] = ("tool_calls", "instructions", "generated_files", "chapters")
+EXTRA_KEYS: tuple[str, ...] = ("tool_calls", "instructions", "generated_files", "generated_jobs", "chapters")
 
 TIMELINE_COLUMNS: tuple[str, ...] = (
     "ts_utc",
@@ -91,11 +92,11 @@ COLUMNS: dict[str, list[tuple[str, str, int]]] = {
         ("source_name", "transfer.col_source", 3),
     ],
     "timeline": [
-        ("time_only", "timeline.col_time", 3),
-        ("category_label", "timeline.col_kind", 2),
+        ("time_only", "timeline.col_time", 2),
+        ("category_label", "timeline.col_kind", 1),
         ("actor_label", "timeline.col_actor", 1),
-        ("summary", "timeline.col_content", 8),
-        ("source_path", "timeline.col_source", 4),
+        ("summary", "timeline.col_content", 9),
+        ("source_path", "timeline.col_source", 3),
     ],
     "exports": [
         ("export_path", "col.export_path", 5),
@@ -105,22 +106,28 @@ COLUMNS: dict[str, list[tuple[str, str, int]]] = {
 }
 
 # Caps that keep the main report bounded however many prompts a case holds.
-TIMELINE_ROW_CAP = 1500
+TIMELINE_ROW_CAP = 400
 TIMELINE_LIMIT_PDF_DOCX = TIMELINE_ROW_CAP
 TIMELINE_LIMIT_HTML = TIMELINE_ROW_CAP
-TIMELINE_CHAT_DAY_THRESHOLD = 50  # a day with more relevant AI chat events collapses to one row per session
-PROMPT_ROW_CAP = 400  # user-input excerpt rows in chapter 3
+TIMELINE_CHAT_DAY_THRESHOLD = 10  # a day with more relevant AI chat events collapses to one row per session
+PROMPT_ROW_CAP = 200  # user-input excerpt rows in chapter 3
 EXCERPT_CHARS = 600  # longest excerpt of any prompt or instruction in the main report
 TOOL_CALL_ROW_CAP = 100  # tool-call rows (file write/delete, transfer/remote commands) in chapter 3
 EXCERPT_DENSE_ROWS = 100  # above this many excerpt rows each excerpt is cut shorter so the PDF stays within its page budget
-EXCERPT_DENSE_CHARS = 240
+EXCERPT_DENSE_CHARS = 100
 TIMELINE_COMPACT_ROWS = 200  # a timeline longer than this renders compact: shorter cells, smaller PDF type
-TIMELINE_SUMMARY_CHARS = 90
-TIMELINE_SOURCE_CHARS = 40
+TIMELINE_SUMMARY_CHARS = 60  # one table line for most rows
+TIMELINE_SOURCE_CHARS = 20
 SHA_PREFIX_CHARS = 12
-SESSION_ROW_CAP = 150  # busiest session rows in the chapter 3 count table
+SESSION_ROW_CAP = 60  # busiest session rows in the chapter 3 count table
 MACHINE_ROW_CAP = 60  # busiest machine / source-file rows in the machine totals; the rest roll into one row
 SENSITIVE_TASKS: tuple[str, ...] = ("TASK-SECURITY", "TASK-EXFIL")  # query category flags that always get a row
+GENERATED_ROW_CAP = 150  # chapter 4 judged-item rows (most recent); the full list is in the prompts volume and CSV
+GENERATED_KV_ROWS = 20  # up to this many judged items render as one detail block each, above it as one table
+# Hermes instruction kinds listed row by row in chapter 3; every other kind (skills, workspace instructions,
+# templates, config backups) is summarised by count there, with the full text kept in the prompts volume.
+INSTRUCTION_ROW_KINDS: tuple[str, ...] = ("persona", "rules", "memory", "export_system_prompt")
+ATTRIBUTIONS_CSV_PATH = "report/csv/attributions.csv"
 TIMELINE_CSV_PATH = "report/csv/timeline.csv"
 PROMPTS_VOLUME_PATH = "report/prompts.html"
 AI_QUERIES_CSV_PATH = "report/csv/ai_queries.csv"
@@ -182,6 +189,8 @@ class ReportModel:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     instructions: list[dict[str, Any]] = field(default_factory=list)
     generated_files: list[dict[str, Any]] = field(default_factory=list)
+    # Per cron job output counts (every job, agent and script mode) behind chapter 4's summary table.
+    generated_jobs: list[dict[str, Any]] = field(default_factory=list)
     timeline_relevant: tuple[bool, ...] = field(default=(), repr=False, compare=False)
     timeline_text: tuple[str, ...] = field(default=(), repr=False, compare=False)
     lifecycle_hidden: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
@@ -756,9 +765,11 @@ def _query_meta(
     wanted = {str(row["artifact_id"]) for row in instructions}
     for a in presence:
         if a.id in wanted:
+            extra = a.data.get("extra")
             meta[a.id] = {
                 "machine": a.data.get("machine"),
                 "kind": a.data.get("kind"),
+                "source_kind": extra.get("source_kind") if isinstance(extra, Mapping) else None,
                 "hash": a.data.get("hash"),
                 "last_local": _local(a.data.get("period_end"), tz),
             }
@@ -774,9 +785,11 @@ def _tool_calls_section(
 ) -> list[dict[str, Any]]:
     keyed: list[tuple[tuple[bool, str], dict[str, Any]]] = []
     for a in calls:
+        name = str(a.data.get("call_name") or "")
+        if name in OUTPUT_CALLS:
+            continue  # agent output records are reported in chapter 4, not as tool calls
         event = first_event.get(a.id)
         ts = event.ts_utc if event is not None else None
-        name = str(a.data.get("call_name") or "")
         path = a.data.get("file_path") or a.data.get("raw_path")
         head = (
             t("prompts.tool_call_text", lang, name=name, path=path)
@@ -806,6 +819,8 @@ def _tool_calls_section(
 def _origin_line(a: Artifact, first_event: Mapping[str, Any], tz: str, lang: str) -> str | None:
     data = a.data
     kind = a.kind
+    if kind is ArtifactKind.AI_TOOL_CALL and data.get("call_name") in OUTPUT_CALLS:
+        return _output_origin(data, lang)
     if kind is ArtifactKind.AI_TOOL_CALL:
         event = first_event.get(a.id)
         stamp = fmt_local(event.ts_utc, tz) if event is not None and event.ts_utc is not None else ""
@@ -834,6 +849,29 @@ def _origin_line(a: Artifact, first_event: Mapping[str, Any], tz: str, lang: str
     return None
 
 
+def _output_origin(data: Mapping[str, Any], lang: str) -> str:
+    """Origin line for an agent output record: cron job name + prompt excerpt, or kanban task title."""
+    raw = data.get("input")
+    inputs: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    name = str(data.get("call_name"))
+    if name.startswith("kanban_"):
+        return t(
+            f"origin.{name}",
+            lang,
+            tool=data.get("tool") or "",
+            task=inputs.get("task_id") or "-",
+            title=inputs.get("task_title") or "-",
+            file=inputs.get("filename") or "-",
+        )
+    return t(
+        f"origin.{name}",
+        lang,
+        tool=data.get("tool") or "",
+        job=inputs.get("job_name") or inputs.get("job_id") or "-",
+        prompt=inputs.get("prompt_excerpt") or "-",
+    )
+
+
 def _generated_files_section(
     attributions: Sequence[Attribution],
     related: Mapping[str, Artifact],
@@ -843,20 +881,39 @@ def _generated_files_section(
     lang: str,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    calls_by_path: dict[str, list[Artifact]] = {}
+    for c in calls:
+        if c.data.get("file_path"):
+            calls_by_path.setdefault(str(c.data["file_path"]), []).append(c)
     for item in attributions:
         if item.verdict is Verdict.HUMAN_AUTHORED:
             continue
         ids = list(item.subject_artifact_ids)
         for signal in item.signals:
             ids.extend(signal.artifact_ids)
-        ids.extend(c.id for c in calls if c.data.get("file_path") == item.subject)
-        origins = [
-            line
-            for aid in dict.fromkeys(ids)
-            if (a := related.get(aid)) is not None and (line := _origin_line(a, first_event, tz, lang))
+        ids.extend(c.id for c in calls_by_path.get(item.subject, ()))
+        linked = [a for aid in dict.fromkeys(ids) if (a := related.get(aid)) is not None]
+        origins = [line for a in linked if (line := _origin_line(a, first_event, tz, lang))]
+        records = [
+            a for a in linked if a.kind is ArtifactKind.AI_TOOL_CALL and a.data.get("call_name") in OUTPUT_CALLS
         ]
+        record = records[0] if records else None
+        event = first_event.get(record.id) if record is not None else None
+        ts = event.ts_utc if event is not None else None
+        basis = (
+            f"{record.provenance.source_path} ({record.provenance.record_locator})"
+            if record is not None and record.provenance.record_locator
+            else record.provenance.source_path
+            if record is not None
+            else None
+        )
         rows.append(
             {
+                "output_kind": record.data.get("call_name") if record is not None else None,
+                "tool": record.data.get("tool") if record is not None else None,
+                "ts_utc": fmt_utc(ts) if ts is not None else None,
+                "ts_local": fmt_local(ts, tz) if ts is not None else None,
+                "basis": basis,
                 "attribution_id": item.id,
                 "subject": item.subject,
                 "verdict": item.verdict.value,
@@ -869,6 +926,31 @@ def _generated_files_section(
             }
         )
     rows.sort(key=lambda r: (_VERDICT_ORDER.get(r["verdict"], 9), r["subject"]))
+    return rows
+
+
+_JOB_COUNT_KEYS = ("outputs", "agent_outputs", "script_outputs", "silent", "failed", "other")
+
+
+def _generated_jobs_section(presence: Sequence[Artifact], tz: str) -> list[dict[str, Any]]:
+    """One row per cron job from the plugin's per-job output summaries, every job included."""
+    rows: list[dict[str, Any]] = []
+    for a in presence:
+        extra = a.data.get("extra")
+        if not isinstance(extra, Mapping) or extra.get("source_kind") != "cron_output_summary":
+            continue
+        row: dict[str, Any] = {
+            "tool": a.data.get("tool"),
+            "job_id": extra.get("job_id"),
+            "job_name": extra.get("job_name"),
+            "mode": extra.get("mode"),
+            "first_local": _local(a.data.get("first_seen"), tz),
+            "last_local": _local(a.data.get("last_seen"), tz),
+            "source": a.provenance.source_path,
+        }
+        row.update({k: int(str(extra.get(k) or 0)) for k in _JOB_COUNT_KEYS})
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["agent_outputs"], -r["outputs"], str(r["job_name"] or ""), str(r["job_id"])))
     return rows
 
 
@@ -1164,4 +1246,5 @@ def build_report_model(
         generated_files=_generated_files_section(
             attributions, related, buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang
         ),
+        generated_jobs=_generated_jobs_section(buckets[ArtifactKind.AI_APP_PRESENCE], tz),
     )

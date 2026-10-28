@@ -53,6 +53,7 @@ class _Source:
     path: str
     artifact_ids: set[str] = field(default_factory=set)
     deleted: bool = False
+    credential: bool = False
 
 
 def _sanitize(name: str) -> str:
@@ -76,6 +77,7 @@ def _sources(store: CaseStore, kinds: frozenset[ArtifactKind]) -> list[_Source]:
         source = sources.setdefault(key, _Source(volume=key[0], path=key[1]))
         source.artifact_ids.add(artifact.id)
         source.deleted = source.deleted or artifact.provenance.deleted
+        source.credential = source.credential or artifact.kind is ArtifactKind.AI_CREDENTIAL
 
     for artifact in store.artifacts(kinds=kinds):
         claim(artifact)
@@ -113,6 +115,9 @@ def _export_one(fs: EvidenceFS, case_dir: Path, source: _Source) -> ExportEntry:
         note = f"skipped: {size} bytes exceeds {MAX_EXPORT_BYTES} byte limit"
         return _skipped(source, ids, size, note, stat.inode)
     data = fs.read_bytes(ref)
+    if source.credential:
+        note = f"not copied: file holds credentials; source sha256 {sha256_bytes(data)}"
+        return _skipped(source, ids, len(data), note, stat.inode)
     export_path = _export_path(source.volume, source.path)
     dest = case_dir / export_path
     dest.parent.mkdir(parents=True, exist_ok=True)

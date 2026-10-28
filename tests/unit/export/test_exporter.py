@@ -41,7 +41,9 @@ def _artifact(path: str, key: str, kind: ArtifactKind = ArtifactKind.SHELL_COMMA
     return Artifact(
         id=make_id("artifact", kind.value, key),
         kind=kind,
-        provenance=Provenance(evidence_id="mem", volume=0, source_path=path, plugin="p", plugin_version="1.0"),
+        provenance=Provenance(
+            evidence_id="mem", volume=0, source_path=path, plugin="p", plugin_version="1.0"
+        ),
         data={},
         user="kim",
     )
@@ -52,6 +54,27 @@ def case_store(tmp_path: Path) -> CaseStore:
     store = CaseStore(tmp_path / "case.db")
     store.init_case(_case())
     return store
+
+
+def test_credential_bearing_file_is_hashed_but_not_copied(case_store: CaseStore, tmp_path: Path) -> None:
+    path = "/Users/kim/.hermes/auth.json"
+    data = b'{"api_key": "sk-not-a-real-key-0000000000000000"}'
+    fs = MemoryFS({path: data})
+    case_store.add(
+        [
+            _artifact(path, "cfg", ArtifactKind.AI_APP_PRESENCE),
+            _artifact(path, "key", ArtifactKind.AI_CREDENTIAL),
+        ]
+    )
+    case_store.finalize()
+    case_dir = tmp_path / "case"
+
+    entries = export_artifacts(fs, case_store, case_dir)
+
+    assert len(entries) == 1
+    assert entries[0].sha256 == ""
+    assert entries[0].note == f"not copied: file holds credentials; source sha256 {sha256_bytes(data)}"
+    assert not (case_dir / entries[0].export_path).exists()
 
 
 def test_exported_file_hash_equals_source_hash(case_store: CaseStore, tmp_path: Path) -> None:

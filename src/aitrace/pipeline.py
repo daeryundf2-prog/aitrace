@@ -189,13 +189,18 @@ def intake_image(image: Path, *, media_hash: bool) -> dict[str, Any]:
     if not image.exists():
         raise PipelineError(f"evidence not found: {image}", EXIT_EVIDENCE)
     if image.is_dir():
-        return {
-            "kind": "dir",
-            "segments": [],
-            "media_sha256": None,
-            "acquisition_hashes": {},
-            "limitations": [DIR_EVIDENCE_LIMITATION],
-        }
+        if not media_hash:
+            return {
+                "kind": "dir",
+                "segments": [],
+                "media_sha256": None,
+                "acquisition_hashes": {},
+                "limitations": [DIR_EVIDENCE_LIMITATION],
+            }
+        try:
+            return verify.intake_dir(image.resolve())
+        except OSError as exc:
+            raise PipelineError(f"evidence unreadable: {image}: {exc}", EXIT_EVIDENCE) from exc
     try:
         return verify.intake(_segment_paths(image), skip_media=not media_hash)
     except (OSError, ValueError) as exc:
@@ -237,7 +242,9 @@ def load_analyzers() -> list[Analyzer]:
     return analyzers
 
 
-def _integrity_finding(evidence: Evidence, intake: dict[str, Any], current: dict[str, dict[str, str]]) -> Finding:
+def _integrity_finding(
+    evidence: Evidence, intake: dict[str, Any], current: dict[str, dict[str, str]]
+) -> Finding:
     segments = {
         seg["name"]: {
             "intake_sha256": seg["sha256"],
@@ -278,7 +285,10 @@ def render_reports(
     written: list[Path] = []
     renderers: dict[str, Callable[[], None]] = {
         "html": lambda: written.extend(
-            [render_html(model, report_dir / "report.html"), render_prompts_volume(model, report_dir / "prompts.html")]
+            [
+                render_html(model, report_dir / "report.html"),
+                render_prompts_volume(model, report_dir / "prompts.html"),
+            ]
         ),
         "pdf": lambda: written.append(render_pdf(model, report_dir / "report.pdf")),
         "docx": lambda: _render_docx(model, report_dir / "report.docx", written),
@@ -379,10 +389,12 @@ def _analyze(opts: AnalyzeOptions, case_dir: Path) -> PipelineResult:
                 "image": image.name,
                 "kind": intake["kind"],
                 "segments": [
-                    {k: seg[k] for k in ("name", "size", "md5", "sha1", "sha256")} for seg in intake["segments"]
+                    {k: seg[k] for k in ("name", "size", "md5", "sha1", "sha256")}
+                    for seg in intake["segments"]
                 ],
                 "media_sha256": intake["media_sha256"],
                 "acquisition_hashes": intake["acquisition_hashes"],
+                **({"tree": intake["tree"]} if "tree" in intake else {}),
             },
         )
         fs = _open(image, intake)
@@ -459,7 +471,7 @@ def _analyze_store(
     verification: dict[str, str] = {}
     for index, item in enumerate(opened):
         status, current = verify.reverify(item.intake)
-        if status == "match" and not item.intake["segments"]:
+        if status == "match" and not item.intake["segments"] and "tree" not in item.intake:
             final = "unverified"
         else:
             final = status
@@ -489,7 +501,11 @@ def _analyze_store(
     custody.append(
         ACTOR,
         "analysis_finished",
-        {"exit_code": exit_code, "verification": dict(sorted(verification.items())), "formats": list(opts.formats)},
+        {
+            "exit_code": exit_code,
+            "verification": dict(sorted(verification.items())),
+            "formats": list(opts.formats),
+        },
     )
 
     finished = datetime.now(UTC)
@@ -547,7 +563,9 @@ def report(case_dir: Path, lang: str | None, formats: Sequence[str]) -> Pipeline
     custody = CustodyLog(case_dir / CUSTODY_FILE)
     db_path = case_dir / CASE_DB
     if not custody.path.is_file() or not db_path.is_file():
-        raise PipelineError(f"{case_dir} is not an aitrace case dir (missing {CUSTODY_FILE} or {CASE_DB})", EXIT_USAGE)
+        raise PipelineError(
+            f"{case_dir} is not an aitrace case dir (missing {CUSTODY_FILE} or {CASE_DB})", EXIT_USAGE
+        )
     if not custody.verify_chain():
         raise PipelineError(f"custody chain in {custody.path} is broken; refusing to render", EXIT_CUSTODY)
     handler = _attach_log_file(case_dir)

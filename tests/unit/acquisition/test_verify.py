@@ -6,11 +6,40 @@ from pathlib import Path
 
 import pytest
 
-from aitrace.acquisition.verify import LIMITATION_NO_STORED_HASH, intake, reverify
+from aitrace.acquisition.verify import LIMITATION_NO_STORED_HASH, intake, intake_dir, reverify
 from aitrace.core.hashing import sha256_bytes
 
 RAW = bytes(range(256)) * 512
-requires_ewfacquire = pytest.mark.skipif(shutil.which("ewfacquire") is None, reason="ewfacquire not installed")
+requires_ewfacquire = pytest.mark.skipif(
+    shutil.which("ewfacquire") is None, reason="ewfacquire not installed"
+)
+
+
+def _tree(root: Path) -> Path:
+    (root / "a" / "b").mkdir(parents=True)
+    (root / "a" / "b" / "one.md").write_text("one", encoding="utf-8")
+    (root / "two.db").write_bytes(b"\x00\x01")
+    return root
+
+
+def test_dir_intake_hashes_every_file_and_reverifies_as_match(tmp_path: Path) -> None:
+    root = _tree(tmp_path / "ev")
+    record = intake_dir(root)
+    assert record["kind"] == "dir"
+    assert record["tree"] == {"root": str(root), "files": 2, "bytes": 5}
+    manifest = f"{sha256_bytes(b'one')}  3  a/b/one.md\n{sha256_bytes(b'\x00\x01')}  2  two.db\n"
+    assert record["media_sha256"] == sha256_bytes(manifest.encode("utf-8"))
+    assert reverify(record)[0] == "match"
+
+
+def test_dir_reverify_detects_changed_and_added_files(tmp_path: Path) -> None:
+    root = _tree(tmp_path / "ev")
+    record = intake_dir(root)
+    (root / "two.db-wal").write_bytes(b"")
+    assert reverify(record)[0] == "mismatch"
+    (root / "two.db-wal").unlink()
+    (root / "a" / "b" / "one.md").write_text("ONE", encoding="utf-8")
+    assert reverify(record)[0] == "mismatch"
 
 
 @pytest.fixture

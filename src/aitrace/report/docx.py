@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,6 +31,13 @@ A4_MM = (210, 297)
 HEAD_FILL = "EFEFEF"
 GRAY = RGBColor(0x80, 0x80, 0x80)
 BLACK = RGBColor(0, 0, 0)
+# Characters XML 1.0 forbids (C0 controls except tab/LF/CR, lone surrogates, U+FFFE/U+FFFF); evidence text
+# can carry them, so they are shown as U+FFFD instead of aborting the DOCX.
+_XML_INVALID = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _xml(text: str) -> str:
+    return _XML_INVALID.sub("\ufffd", text)
 
 
 def _set_font(style: ParagraphStyle, name: str, size: float, *, bold: bool = False) -> None:
@@ -141,7 +149,7 @@ def _fill(cell: Any, text: str, *, bold: bool = False) -> None:
     paragraph = cell.paragraphs[0]
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.line_spacing = 1.15
-    run = paragraph.add_run(text)
+    run = paragraph.add_run(_xml(text))
     run.font.size = Pt(TABLE_PT)
     run.bold = bold
 
@@ -149,7 +157,7 @@ def _fill(cell: Any, text: str, *, bold: bool = False) -> None:
 def _table(doc: DocumentObject, block: Table) -> None:
     headers, rows, weights = block.headers, block.rows, block.weights
     if block.caption:
-        note = doc.add_paragraph(block.caption)
+        note = doc.add_paragraph(_xml(block.caption))
         note.paragraph_format.space_after = Pt(2)
         note.paragraph_format.keep_with_next = True
         note.runs[0].font.size = Pt(TABLE_PT)
@@ -213,7 +221,7 @@ def _toc(doc: DocumentObject, model_doc: Document, title: str) -> None:
     run.font.size = Pt(HEADING_PT[1])
     run.bold = True
     for entry in model_doc.toc():
-        line = doc.add_paragraph(f"{entry.number} {entry.text}")
+        line = doc.add_paragraph(_xml(f"{entry.number} {entry.text}"))
         line.paragraph_format.left_indent = Mm(0 if entry.level == 1 else 8)
         line.paragraph_format.space_after = Pt(3)
         line.paragraph_format.line_spacing = 1.15
@@ -232,7 +240,7 @@ def render_docx(model: ReportModel, out_path: Path | str) -> None:
     landscape = False
     for block in model_doc.blocks:
         if isinstance(block, Heading):
-            text = f"{block.number} {block.text}"
+            text = _xml(f"{block.number} {block.text}")
             if block.level == 1:
                 if block.landscape != landscape:
                     _start_section(doc, landscape=block.landscape)
@@ -244,7 +252,7 @@ def render_docx(model: ReportModel, out_path: Path | str) -> None:
             else:
                 doc.add_heading(text, level=block.level)
         elif isinstance(block, Para):
-            doc.add_paragraph(block.text)
+            doc.add_paragraph(_xml(block.text))
         else:
             _table(doc, block)
     doc.save(str(out_path))

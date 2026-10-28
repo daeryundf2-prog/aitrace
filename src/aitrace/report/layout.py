@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,9 +10,26 @@ from typing import Any
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.report.i18n import t
 from aitrace.report.model import (
+    AI_QUERIES_CSV_PATH,
     COLUMNS,
+    EXCERPT_CHARS,
+    EXCERPT_DENSE_CHARS,
+    EXCERPT_DENSE_ROWS,
+    MACHINE_ROW_CAP,
+    PROMPT_ROW_CAP,
+    PROMPTS_VOLUME_PATH,
+    REPORT_JSON_PATH,
+    SESSION_ROW_CAP,
+    SHA_PREFIX_CHARS,
+    TIMELINE_CHAT_DAY_THRESHOLD,
+    TIMELINE_COMPACT_ROWS,
+    TIMELINE_CSV_PATH,
     TIMELINE_LIMIT_PDF_DOCX,
+    TIMELINE_SOURCE_CHARS,
+    TIMELINE_SUMMARY_CHARS,
+    TOOL_CALL_ROW_CAP,
     ReportModel,
+    text_sha256,
 )
 
 KO_LETTERS = "가나다라마바사아자차카타파하"
@@ -19,7 +37,10 @@ EN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 MAX_TOOL_NAMES = 8
 CHANNEL_ARROW = " \u2192 "
 
-PROMPT_SECTIONS: tuple[str, ...] = ("system", "user", "assistant")
+WRITE_NAME = re.compile(r"write|edit|patch|create|delete|remove|unlink|rename|move|save|append|truncate|mkdir|\brm\b", re.IGNORECASE)
+TRANSFER_COMMAND = re.compile(
+    r"\b(scp|sftp|rsync|rclone|curl|wget|ssh|ftp|ncat|socat|nc|aws\s+s3|gsutil|git\s+push|rm|del)\b", re.IGNORECASE
+)
 LIMIT_SECTIONS: tuple[str, ...] = ("plugins", "warnings", "undecoded", "findings", "caveats")
 LANDSCAPE_CHAPTERS: frozenset[str] = frozenset({"timeline", "exports"})
 
@@ -47,6 +68,7 @@ class Table:
     raw: frozenset[int] = frozenset()  # columns holding recovered text, reproduced verbatim
     caption: str = ""
     label_first: bool = False  # key/value table whose first column labels the row
+    compact: bool = False  # long table: renderers may use smaller type
 
 
 Block = Heading | Para | Table
@@ -156,6 +178,7 @@ class _Builder:
         raw: Sequence[int] = (),
         caption: str = "",
         label_first: bool = False,
+        compact: bool = False,
     ) -> None:
         self.blocks.append(
             Table(
@@ -165,6 +188,7 @@ class _Builder:
                 frozenset(raw),
                 caption,
                 label_first,
+                compact,
             )
         )
 
@@ -399,7 +423,7 @@ def _statements(model: ReportModel) -> list[str]:
     if total or f.calls:
         out.append(
             t("stmt.messages", lang, total=total, s=f.system, u=f.user, a=f.assistant, c=f.calls)
-            + _cite(lang, t("ref.range", lang, n=3, s1="1.", s2="3."))
+            + _cite(lang, t("ref.range", lang, n=3, s1="1.", s2="4."))
         )
     else:
         out.append(t("stmt.messages_none", lang) + _cite(lang, t("ref.chapter", lang, n=3)))
@@ -456,7 +480,7 @@ def _opinions(model: ReportModel) -> list[str]:
     if f.tool_names:
         out.append(
             t("opin.tools", lang, names=_names(f.tool_names))
-            + _cite(lang, t("ref.tools_table", lang), t("ref.range", lang, n=3, s1="1.", s2="3."))
+            + _cite(lang, t("ref.tools_table", lang), t("ref.range", lang, n=3, s1="1.", s2="4."))
         )
     else:
         out.append(t("opin.tools_none", lang) + _cite(lang, t("ref.tools_table", lang)))
@@ -487,20 +511,426 @@ def _tools_table(b: _Builder, model: ReportModel) -> None:
     )
 
 
-def _grouped(rows: Sequence[Mapping[str, Any]], lang: str) -> list[tuple[str, list[tuple[str | None, list[Mapping[str, Any]]]]]]:
-    by_tool: dict[str | None, dict[str | None, list[Mapping[str, Any]]]] = {}
-    for row in rows:
-        by_tool.setdefault(row.get("tool"), {}).setdefault(row.get("session"), []).append(row)
+def tool_label(tool: Any, lang: str) -> str:
+    return str(tool) if tool else t("sec.unknown_tool", lang)
 
-    def stamp(row: Mapping[str, Any]) -> tuple[bool, str]:
-        return (row.get("ts_utc") is None, str(row.get("ts_utc") or ""))
 
-    groups = []
-    for tool in sorted(by_tool, key=lambda k: (k is None, str(k or ""))):
-        sessions = {s: sorted(items, key=stamp) for s, items in by_tool[tool].items()}
-        ordered = sorted(sessions, key=lambda s: (s is None, stamp(sessions[s][0])))
-        groups.append((str(tool) if tool else t("sec.unknown_tool", lang), [(s, sessions[s]) for s in ordered]))
+def _excerpt(value: Any, limit: int = EXCERPT_CHARS) -> str:
+    text = _text(value)
+    return text if len(text) <= limit else text[:limit].rstrip() + "\u2026"
+
+
+def _excerpt_chars(rows: int) -> int:
+    return EXCERPT_CHARS if rows <= EXCERPT_DENSE_ROWS else EXCERPT_DENSE_CHARS
+
+
+def _tail(value: str, limit: int) -> str:
+    return value if len(value) <= limit else "\u2026" + value[-(limit - 1) :]
+
+
+def _stamp(row: Mapping[str, Any]) -> tuple[bool, str]:
+    return (row.get("ts_utc") is None, str(row.get("ts_utc") or ""))
+
+
+def machine_label(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]) -> str:
+    machine = (meta.get(str(row.get("artifact_id"))) or {}).get("machine")
+    return str(machine) if machine else _basename(row.get("source")) or "-"
+
+
+@dataclass(slots=True)
+class _SessionCount:
+    first: tuple[bool, str] = (True, "")
+    last: tuple[bool, str] = (True, "")
+    first_local: str = ""
+    last_local: str = ""
+    user: int = 0
+    ai: int = 0
+    calls: int = 0
+    channels: dict[str, None] = field(default_factory=dict)
+
+    def touch(self, row: Mapping[str, Any]) -> None:
+        stamp = _stamp(row)
+        local = _text(row.get("ts_local"))
+        if stamp[0]:
+            return
+        if self.first[0] or stamp < self.first:
+            self.first, self.first_local = stamp, local
+        if self.last[0] or stamp > self.last:
+            self.last, self.last_local = stamp, local
+
+
+def _session_counts(model: ReportModel) -> dict[tuple[str, str, str | None], _SessionCount]:
+    meta = model.query_meta
+    lang = model.lang
+    machine_of: dict[tuple[str, str | None], str] = {}
+    for q in model.ai_queries:  # a session keeps the machine label of its labelled records
+        label = (meta.get(str(q.get("artifact_id"))) or {}).get("machine")
+        if label and q.get("session") is not None:
+            machine_of.setdefault((tool_label(q.get("tool"), lang), q.get("session")), str(label))
+    groups: dict[tuple[str, str, str | None], _SessionCount] = {}
+    for q in model.ai_queries:
+        role = q.get("role")
+        if role == "system":
+            continue
+        tool = tool_label(q.get("tool"), lang)
+        session = q.get("session")
+        machine = machine_of.get((tool, session)) or machine_label(q, meta)
+        group = groups.setdefault((tool, machine, session), _SessionCount())
+        group.touch(q)
+        if role == "user":
+            group.user += 1
+        else:
+            group.ai += 1
+        channel = (meta.get(str(q.get("artifact_id"))) or {}).get("channel")
+        if channel:
+            group.channels[str(channel)] = None
+    for call in model.tool_calls:
+        tool = tool_label(call.get("tool"), lang)
+        session = call.get("session")
+        machine = machine_of.get((tool, session)) or _basename(call.get("source")) or "-"
+        group = groups.setdefault((tool, machine, session), _SessionCount())
+        group.touch(call)
+        group.calls += 1
     return groups
+
+
+def _counts_section(b: _Builder, model: ReportModel) -> None:
+    lang = b.lang
+    b.section(t("sec.counts", lang))
+    groups = _session_counts(model)
+    if not groups:
+        b.para(t("summary.none", lang))
+        return
+    b.para(t("counts.note", lang, n=len(groups), volume=PROMPTS_VOLUME_PATH))
+    ordered = sorted(groups.items(), key=lambda item: (item[0][0], item[0][1], item[1].first, str(item[0][2])))
+    if len(ordered) > SESSION_ROW_CAP:
+        _machine_totals(b, ordered)
+        busiest = sorted(ordered, key=lambda item: -(item[1].user + item[1].ai + item[1].calls))
+        keep = {id(item) for item in busiest[:SESSION_ROW_CAP]}
+        ordered = [item for item in ordered if id(item) in keep]
+        b.para(t("counts.cap_note", lang, total=len(groups), shown=len(ordered), cap=SESSION_ROW_CAP))
+    rows = []
+    for (tool, machine, session), g in ordered:
+        period = f"{g.first_local} ~ {g.last_local}" if g.first_local else "-"
+        rows.append(
+            (
+                tool,
+                machine,
+                session or "-",
+                period,
+                str(g.user),
+                str(g.ai),
+                str(g.calls),
+                ", ".join(g.channels) or "-",
+            )
+        )
+    b.table(
+        [
+            t(key, lang)
+            for key in (
+                "counts.col_tool",
+                "counts.col_machine",
+                "counts.col_session",
+                "counts.col_period",
+                "counts.col_user",
+                "counts.col_ai",
+                "counts.col_calls",
+                "counts.col_channel",
+            )
+        ],
+        rows,
+        (2, 3, 4, 5, 1, 1, 1, 2),
+        caption=t("counts.cap_session", lang) if len(groups) > SESSION_ROW_CAP else "",
+        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def _machine_totals(b: _Builder, ordered: Sequence[tuple[tuple[str, str, str | None], _SessionCount]]) -> None:
+    lang = b.lang
+    totals: dict[tuple[str, str], _SessionCount] = {}
+    sessions: dict[tuple[str, str], int] = {}
+    for (tool, machine, _), g in ordered:
+        total = totals.setdefault((tool, machine), _SessionCount())
+        sessions[(tool, machine)] = sessions.get((tool, machine), 0) + 1
+        _merge(total, g)
+    busiest = sorted(totals.items(), key=lambda item: -(item[1].user + item[1].ai + item[1].calls))
+    shown = sorted(busiest[:MACHINE_ROW_CAP])
+    rest = busiest[MACHINE_ROW_CAP:]
+    rows = [_total_row(tool, machine, sessions[(tool, machine)], g) for (tool, machine), g in shown]
+    if rest:
+        other = _SessionCount()
+        for _, g in rest:
+            _merge(other, g)
+        label = t("counts.others", lang, n=len(rest))
+        rows.append(_total_row("", label, sum(sessions[key] for key, _ in rest), other))
+    b.table(
+        [
+            t(key, lang)
+            for key in (
+                "counts.col_tool",
+                "counts.col_machine",
+                "counts.col_sessions",
+                "counts.col_period",
+                "counts.col_user",
+                "counts.col_ai",
+                "counts.col_calls",
+                "counts.col_channel",
+            )
+        ],
+        rows,
+        (2, 3, 2, 5, 1, 1, 1, 2),
+        caption=t("counts.cap_machine", lang),
+        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def _merge(total: _SessionCount, g: _SessionCount) -> None:
+    total.user += g.user
+    total.ai += g.ai
+    total.calls += g.calls
+    total.channels.update(g.channels)
+    if g.first_local and (not total.first_local or g.first < total.first):
+        total.first, total.first_local = g.first, g.first_local
+    if g.last_local and (not total.last_local or g.last > total.last):
+        total.last, total.last_local = g.last, g.last_local
+
+
+def _total_row(tool: str, machine: str, sessions: int, g: _SessionCount) -> tuple[str, ...]:
+    return (
+        tool,
+        machine,
+        f"{sessions:,}",
+        f"{g.first_local} ~ {g.last_local}" if g.first_local else "-",
+        f"{g.user:,}",
+        f"{g.ai:,}",
+        f"{g.calls:,}",
+        ", ".join(g.channels) or "-",
+    )
+
+
+def _seen(first: str, last: str) -> str:
+    return f"{first} ~ {last}" if first and last and first != last else first or last or "-"
+
+
+def _instruction_section(b: _Builder, model: ReportModel) -> None:
+    lang = b.lang
+    b.section(t("sec.system", lang))
+    meta = model.query_meta
+    found = [*model.instructions, *(q for q in model.ai_queries if q.get("role") == "system")]
+    if not found:
+        b.para(t("summary.none", lang))
+        return
+    distinct: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in found:
+        text = _text(row.get("text"))
+        key = (_text(row.get("source")), text_sha256(text))
+        extra = meta.get(str(row.get("artifact_id"))) or {}
+        slot = distinct.get(key)
+        if slot is None:
+            slot = distinct[key] = {"row": row, "text": text, "first": (True, ""), "first_local": "", "last_local": ""}
+        stamp = _stamp(row)
+        if not stamp[0] and (slot["first"][0] or stamp < slot["first"]):
+            slot["first"], slot["first_local"] = stamp, _text(row.get("ts_local"))
+        later = _text(extra.get("last_local")) or _text(row.get("ts_local"))
+        if later and later > slot["last_local"]:
+            slot["last_local"] = later
+    ordered = sorted(
+        distinct.items(),
+        key=lambda item: (_text(item[1]["row"].get("tool")), item[0][0], item[1]["first"]),
+    )
+    chars = _excerpt_chars(len(ordered))
+    b.para(t("instr.note", lang, n=len(ordered), chars=chars, volume=PROMPTS_VOLUME_PATH))
+    rows = []
+    for (source, sha), slot in ordered:
+        row = slot["row"]
+        kind = _text(row.get("role_label"))
+        extra_kind = (meta.get(str(row.get("artifact_id"))) or {}).get("kind")
+        if extra_kind:
+            kind = f"{kind} ({extra_kind})"
+        rows.append(
+            (
+                f"{tool_label(row.get('tool'), lang)}\n{kind}",
+                source,
+                f"{len(slot['text'].encode('utf-8', 'replace')):,}",
+                _seen(slot["first_local"], slot["last_local"]),
+                sha[:SHA_PREFIX_CHARS],
+                _excerpt(slot["text"], chars),
+            )
+        )
+    b.table(
+        (
+            t("counts.col_tool", lang) + " / " + t("instr.col_kind", lang),
+            t("instr.col_path", lang),
+            t("instr.col_size", lang),
+            t("instr.col_seen", lang),
+            t("instr.col_sha", lang),
+            t("instr.col_excerpt", lang, n=chars),
+        ),
+        rows,
+        (3, 5, 2, 4, 3, 9),
+        raw=(5,),
+        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def _where(row: Mapping[str, Any], model: ReportModel, machines: Mapping[tuple[str, str | None], str]) -> str:
+    tool = tool_label(row.get("tool"), model.lang)
+    session = row.get("session")
+    if row.get("role") == "tool_call":
+        machine = machines.get((tool, session)) or _basename(row.get("source")) or "-"
+    else:
+        machine = machine_label(row, model.query_meta)
+    return f"{tool}\n{machine}\n{session or '-'}"
+
+
+def _machines(model: ReportModel) -> dict[tuple[str, str | None], str]:
+    out: dict[tuple[str, str | None], str] = {}
+    for q in model.ai_queries:
+        out.setdefault((tool_label(q.get("tool"), model.lang), q.get("session")), machine_label(q, model.query_meta))
+    return out
+
+
+def _user_excerpts(model: ReportModel, users: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[Mapping[str, Any], str]], int]:
+    """Rows to show plus the number of flagged prompts: everything when small, else flagged + session edges."""
+    lang = model.lang
+    meta = model.query_meta
+    if len(users) <= PROMPT_ROW_CAP:
+        return [(u, _flag_label(u, meta, lang, ())) for u in users], 0
+    flagged = [u for u in users if (meta.get(str(u.get("artifact_id"))) or {}).get("flags")]
+    edges: dict[tuple[str, str, str | None], list[Mapping[str, Any]]] = {}
+    for u in users:
+        key = (tool_label(u.get("tool"), lang), machine_label(u, meta), u.get("session"))
+        pair = edges.setdefault(key, [u, u])
+        pair[1] = u
+    edge_label: dict[str, list[str]] = {}
+    for first, last in edges.values():
+        edge_label.setdefault(str(first.get("artifact_id")), []).append("flag.first")
+        if last is not first:
+            edge_label.setdefault(str(last.get("artifact_id")), []).append("flag.last")
+    chosen: dict[str, Mapping[str, Any]] = {}
+    for u in flagged:
+        if len(chosen) < PROMPT_ROW_CAP:
+            chosen[str(u.get("artifact_id"))] = u
+    for first, last in edges.values():
+        for u in (first, last):
+            if len(chosen) < PROMPT_ROW_CAP:
+                chosen.setdefault(str(u.get("artifact_id")), u)
+    shown = sorted(chosen.values(), key=_stamp)
+    return [(u, _flag_label(u, meta, lang, edge_label.get(str(u.get("artifact_id")), ()))) for u in shown], len(flagged)
+
+
+def _flag_label(row: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]], lang: str, edges: Sequence[str]) -> str:
+    keys = [f"flag.{f}" for f in (meta.get(str(row.get("artifact_id"))) or {}).get("flags") or ()] + list(edges)
+    return ", ".join(t(k, lang) for k in keys) or t("flag.all", lang)
+
+
+def _user_section(b: _Builder, model: ReportModel, users: Sequence[Mapping[str, Any]]) -> None:
+    lang = b.lang
+    b.section(t("sec.user_excerpt", lang))
+    if not users:
+        b.para(t("summary.none", lang))
+        return
+    selected, flagged = _user_excerpts(model, users)
+    chars = _excerpt_chars(len(selected))
+    if len(users) <= PROMPT_ROW_CAP:
+        b.para(t("user.note_all", lang, n=len(users)))
+    else:
+        b.para(
+            t(
+                "user.note_cap",
+                lang,
+                total=len(users),
+                shown=len(selected),
+                flagged=flagged,
+                cap=PROMPT_ROW_CAP,
+                chars=chars,
+                volume=PROMPTS_VOLUME_PATH,
+                csv=AI_QUERIES_CSV_PATH,
+            )
+        )
+    machines = _machines(model)
+    b.table(
+        (
+            t("prompts.col_time", lang),
+            t("user.col_where", lang),
+            t("user.col_flag", lang),
+            t("prompts.col_text", lang),
+            t("prompts.col_source", lang),
+        ),
+        [
+            (
+                _text(u.get("ts_local")) or "-",
+                _where(u, model, machines),
+                flag,
+                _excerpt(u.get("text"), chars),
+                _text(u.get("source")),
+            )
+            for u, flag in selected
+        ],
+        (3, 4, 2, 9, 4),
+        raw=(3,),
+        compact=len(selected) > EXCERPT_DENSE_ROWS,
+    )
+
+
+def _risky_call(row: Mapping[str, Any]) -> bool:
+    name = _text(row.get("call_name"))
+    return bool(WRITE_NAME.search(name) or TRANSFER_COMMAND.search(f"{name} {_text(row.get('text'))}"))
+
+
+def _assistant_section(b: _Builder, model: ReportModel) -> None:
+    lang = b.lang
+    b.section(t("sec.assistant", lang))
+    answers = [q for q in model.ai_queries if q.get("role") not in ("system", "user")]
+    calls = model.tool_calls
+    if not answers and not calls:
+        b.para(t("summary.none", lang))
+        return
+    machines = _machines(model)
+    if len(answers) + len(calls) <= TOOL_CALL_ROW_CAP:
+        b.para(t("ai.note_all", lang, a=len(answers), c=len(calls)))
+        rows = sorted([*answers, *calls], key=_stamp)
+    else:
+        risky = [c for c in calls if _risky_call(c)]
+        rows = risky[:TOOL_CALL_ROW_CAP]
+        b.para(
+            t(
+                "ai.note_cap",
+                lang,
+                a=len(answers),
+                c=len(calls),
+                m=len(risky),
+                shown=len(rows),
+                cap=TOOL_CALL_ROW_CAP,
+                volume=PROMPTS_VOLUME_PATH,
+                json=REPORT_JSON_PATH,
+            )
+        )
+    if not rows:
+        return
+    chars = _excerpt_chars(len(rows))
+    b.table(
+        (
+            t("prompts.col_time", lang),
+            t("user.col_where", lang),
+            t("prompts.col_kind", lang),
+            t("prompts.col_text", lang),
+            t("prompts.col_source", lang),
+        ),
+        [
+            (
+                _text(r.get("ts_local")) or "-",
+                _where(r, model, machines),
+                _text(r.get("role_label")),
+                _excerpt(r.get("text"), chars),
+                _text(r.get("source")),
+            )
+            for r in rows
+        ],
+        (3, 4, 2, 9, 4),
+        raw=(3,),
+        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    )
 
 
 def _prompts(b: _Builder, model: ReportModel) -> None:
@@ -508,38 +938,11 @@ def _prompts(b: _Builder, model: ReportModel) -> None:
     b.chapter(t("chapter.prompts", lang))
     b.para(t("prompts.intro", lang))
     _tools_table(b, model)
-    system = [*model.instructions, *(q for q in model.ai_queries if q.get("role") == "system")]
-    user = [q for q in model.ai_queries if q.get("role") == "user"]
-    assistant = [*(q for q in model.ai_queries if q.get("role") not in ("system", "user")), *model.tool_calls]
-    headers = (
-        t("prompts.col_time", lang),
-        t("prompts.col_kind", lang),
-        t("prompts.col_text", lang),
-        t("prompts.col_source", lang),
-    )
-    for key, rows in zip(PROMPT_SECTIONS, (system, user, assistant), strict=True):
-        b.section(t(f"sec.{key}", lang))
-        if not rows:
-            b.para(t("summary.none", lang))
-            continue
-        for tool, sessions in _grouped(rows, lang):
-            b.sub(tool)
-            for session, items in sessions:
-                b.subsub(t("sec.session", lang, session=session) if session else t("sec.no_session", lang))
-                b.table(
-                    headers,
-                    [
-                        (
-                            _text(r.get("ts_local")) or "-",
-                            _text(r.get("role_label")),
-                            _text(r.get("text")),
-                            _text(r.get("source")),
-                        )
-                        for r in items
-                    ],
-                    (3, 2, 9, 4),
-                    raw=(2,),
-                )
+    users = [q for q in model.ai_queries if q.get("role") == "user"]
+    _counts_section(b, model)
+    _instruction_section(b, model)
+    _user_section(b, model, users)
+    _assistant_section(b, model)
 
 
 def _generated(b: _Builder, model: ReportModel) -> None:
@@ -562,15 +965,28 @@ def _generated(b: _Builder, model: ReportModel) -> None:
         )
 
 
+def _timeline_cell(row: Mapping[str, Any], key: str, compact: bool) -> str:
+    value = _text(row.get(key))
+    if not compact or row.get("collapsed"):
+        return value
+    if key == "summary":
+        return value if len(value) <= TIMELINE_SUMMARY_CHARS else value[:TIMELINE_SUMMARY_CHARS].rstrip() + "\u2026"
+    if key == "source_path":
+        return _tail(value, TIMELINE_SOURCE_CHARS)
+    return value
+
+
 def _timeline(b: _Builder, model: ReportModel, limit: int) -> None:
     lang = b.lang
     b.chapter(t("chapter.timeline", lang), landscape=True)
-    days = model.timeline_days(limit)
+    view = model.timeline_view(limit)
+    days = view.days
     if not days:
         b.para(t("stmt.timeline_none", lang))
         return
     spec = COLUMNS["timeline"]
     headers = [t(label, lang) for _, label, _ in spec]
+    compact = sum(len(rows) for _, rows in days) > TIMELINE_COMPACT_ROWS
     quiet: list[tuple[str | None, list[dict[str, Any]]]] = []
 
     def flush_quiet() -> None:
@@ -591,13 +1007,24 @@ def _timeline(b: _Builder, model: ReportModel, limit: int) -> None:
         b.section(t("sec.day", lang, day=day or t("sec.no_day", lang), n=total), toc=False)
         b.table(
             headers,
-            [[_text(r.get(key)) for key, _, _ in spec] for r in rows],
+            [[_timeline_cell(r, key, compact) for key, _, _ in spec] for r in rows],
             [w for _, _, w in spec],
+            compact=compact,
         )
     flush_quiet()
-    note = model.timeline_note(limit, lang)
+    note = model.timeline_note_for(view.omitted, limit, lang)
     if note:
         b.para(note)
+    if view.aggregated:
+        b.para(
+            t(
+                "timeline.aggregated_note",
+                lang,
+                n=TIMELINE_CHAT_DAY_THRESHOLD,
+                csv=TIMELINE_CSV_PATH,
+                volume=PROMPTS_VOLUME_PATH,
+            )
+        )
 
 
 def _channel(value: Any, lang: str) -> str:
@@ -755,6 +1182,13 @@ def _annexes(b: _Builder, model: ReportModel) -> None:
 
 
 def build_document(model: ReportModel, timeline_limit: int = TIMELINE_LIMIT_PDF_DOCX) -> Document:
+    cached = model.doc_cache.get(timeline_limit)
+    if cached is None:
+        cached = model.doc_cache[timeline_limit] = _build_document(model, timeline_limit)
+    return cached
+
+
+def _build_document(model: ReportModel, timeline_limit: int) -> Document:
     lang = model.lang
     b = _Builder(lang)
     _overview(b, model)

@@ -48,7 +48,7 @@ def _chapters(doc: Document) -> list[dict[str, Any]]:
     return chapters
 
 
-def _environment() -> Environment:
+def environment() -> Environment:
     return Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=True,
@@ -63,7 +63,7 @@ def render_html_string(model: ReportModel) -> str:
     if lang not in SUPPORTED_LANGS:
         lang = DEFAULT_LANG
     doc = build_document(model, TIMELINE_LIMIT_HTML)
-    return _environment().get_template(TEMPLATE_NAME).render(
+    return environment().get_template(TEMPLATE_NAME).render(
         lang=lang,
         doc=doc,
         toc_title=t("toc.title", lang),

@@ -5,70 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ doc.title }} - {{ doc.cover[0][1] }}</title>
 <style>
-:root {
-  --serif: "Noto Serif KR", "Nanum Myeongjo", "AppleMyungjo", "Batang", serif;
-  --sans: "Nanum Gothic", "NanumGothic", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  --ink: #000;
-  --paper: #fff;
-  --head-fill: #efefef;
-  --muted: #666;
-  --rule: 0.5pt solid #000;
-}
-* { box-sizing: border-box; }
-html { background: var(--paper); }
-body {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: 10.5pt;
-  line-height: 1.75;
-  color: var(--ink);
-  background: var(--paper);
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-}
-.sheet { max-width: 210mm; margin: 0 auto; padding: 20mm 18mm; }
-h1, h2, h3, h4, h5 { font-family: var(--sans); font-weight: 700; color: var(--ink); line-height: 1.4; }
-h2 { margin: 0 0 8mm; padding-bottom: 2mm; border-bottom: var(--rule); font-size: 15pt; }
-h3 { margin: 8mm 0 3mm; font-size: 12pt; }
-h4 { margin: 6mm 0 2mm; font-size: 10.5pt; }
-h5 { margin: 4mm 0 2mm; font-size: 10.5pt; }
-h2 .no, h3 .no, h4 .no, h5 .no { margin-right: 0.6em; }
-p { margin: 0 0 3mm; text-align: justify; }
-.cover { min-height: 240mm; padding-top: 40mm; text-align: center; }
-.cover h1 { margin: 0 0 20mm; font-size: 22pt; }
-.cover table { width: 100%; max-width: 150mm; margin: 0 auto 20mm; text-align: left; }
-.cover .notice { text-align: center; }
-nav.toc { margin: 0 0 12mm; }
-nav.toc h2 { border-bottom: 0; }
-nav.toc p { margin: 0 0 1mm; text-align: left; }
-nav.toc p.l2 { padding-left: 8mm; }
-nav.toc a { color: var(--ink); text-decoration: none; }
-nav.toc a:hover { text-decoration: underline; }
-section.chapter { margin: 0 0 16mm; }
-table { width: 100%; margin: 0 0 4mm; border-collapse: collapse; table-layout: fixed; font-size: 9pt; line-height: 1.55; }
-caption { margin: 0 0 1.5mm; text-align: left; font-size: 9pt; }
-th, td { padding: 1.2mm 2mm; border: var(--rule); text-align: left; vertical-align: top; }
-th { font-family: var(--serif); font-weight: 700; background: var(--head-fill); }
-td { white-space: pre-line; }
-td.raw { white-space: pre-wrap; }
-td.label { background: var(--paper); }
-thead { display: table-header-group; }
-tr { break-inside: avoid; }
-@page { size: A4; margin: 25mm; @top-right { content: "{{ doc.header_text }}"; font-family: var(--serif); font-size: 8pt; color: var(--muted); } @bottom-center { content: "- " counter(page) " / " counter(pages) " -"; font-family: var(--serif); font-size: 9pt; } }
-@page wide { size: A4 landscape; margin: 25mm; }
-@media print {
-  .sheet { max-width: none; padding: 0; }
-  .cover { break-after: page; padding-top: 30mm; min-height: 0; }
-  nav.toc { break-after: page; }
-  section.chapter { break-before: page; margin: 0; }
-  section.chapter.landscape { page: wide; }
-  h2, h3, h4, h5 { break-after: avoid; }
-}
-@media (max-width: 600px) {
-  .sheet { padding: 8mm 5mm; }
-  .cover { min-height: 0; padding-top: 10mm; }
-}
-</style>
+{% include "report.css.j2" %}</style>
 </head>
 <body>
 <div class="sheet">

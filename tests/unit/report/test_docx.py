@@ -34,6 +34,15 @@ def _open(tmp_path: Path, lang: str = "ko") -> DocumentObject:
     return Document(str(path))
 
 
+def test_control_characters_in_evidence_text_do_not_break_docx(tmp_path: Path) -> None:
+    path = tmp_path / "report.docx"
+    render_docx(sample.make_model("ko", prompt="\x1b[31m경쟁사\x00 제안서\x07 요약"), path)
+    text = "\n".join(
+        cell.text for table in Document(str(path)).tables for row in table.rows for cell in row.cells
+    )
+    assert "\ufffd[31m경쟁사\ufffd 제안서\ufffd 요약" in text
+
+
 def test_chapter_headings_follow_the_required_order(tmp_path: Path) -> None:
     doc = _open(tmp_path)
     headings = [p.text for p in doc.paragraphs if p.style is not None and p.style.name == "Heading 1"]

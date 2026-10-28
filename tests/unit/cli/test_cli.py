@@ -23,6 +23,7 @@ LAYOUT = (
     "custody.jsonl",
     "logs/aitrace.log",
     "report/report.html",
+    "report/prompts.html",
     "report/report.pdf",
     "report/report.docx",
     "report/report.json",

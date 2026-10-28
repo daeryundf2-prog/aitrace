@@ -91,28 +91,32 @@ def test_summary_and_opinion_statements_cite_their_basis() -> None:
             assert not line.endswith("!") and "?" not in line
 
 
-def test_prompts_grouped_by_tool_then_session_in_time_order() -> None:
+def test_prompts_chapter_counts_by_session_and_shows_all_user_input_when_small() -> None:
     doc = build_document(sample.make_model("ko"))
-    user = _between(doc, 2, "사용자 입력")
-    tools = [b.text for b in user if isinstance(b, Heading) and b.level == 3]
-    sessions = [b.text for b in user if isinstance(b, Heading) and b.level == 4]
-    assert tools == ["Claude Code", "Codex"]
-    assert sessions == ["세션 s0", "세션 s1", "세션 s2"]
+    counts = [b for b in _between(doc, 2, "수량표") if isinstance(b, Table)]
+    assert len(counts) == 1
+    assert counts[0].headers[:4] == ("도구", "머신/프로필", "세션", "기간(현지)")
+    assert {row[0] for row in counts[0].rows} == {"Claude Code", "Codex"}
+    assert {row[2] for row in counts[0].rows} == {"s0", "s1", "s2"}
+    user = _between(doc, 2, "사용자 입력 발췌")
+    assert "모두 표시" in _paragraphs(user)[0]
     tables = [b for b in user if isinstance(b, Table)]
-    assert [row[2] for t in tables for row in t.rows] == ["이른 세션 질의", "경쟁사 제안서를 요약해줘", "다른 도구 질의"]
-    assert tables[0].headers == ("시각(현지)", "구분", "원문", "출처 경로")
-    assert tables[0].raw == frozenset({2})
+    assert sorted(row[3] for t in tables for row in t.rows) == sorted(
+        ["이른 세션 질의", "경쟁사 제안서를 요약해줘", "다른 도구 질의"]
+    )
+    assert tables[0].headers[0] == "시각(현지)"
+    assert tables[0].raw == frozenset({3})
 
 
 def test_system_and_assistant_sections_include_instructions_and_tool_calls() -> None:
     doc = build_document(sample.make_model("ko"))
     system = [row for b in _between(doc, 2, "시스템 지시문·페르소나·규칙") if isinstance(b, Table) for row in b.rows]
-    assert [row[2] for row in system] == [
-        "당신은 보조 개발자임",
-        "Claude Code의 지시문 관련 설정으로 확인됨: CLAUDE.md",
-    ]
+    assert sorted(row[5] for row in system) == sorted(
+        ["당신은 보조 개발자임", "Claude Code의 지시문 관련 설정으로 확인됨: CLAUDE.md"]
+    )
+    assert all(len(row[4]) == 12 for row in system)
     assistant = [row for b in _between(doc, 2, "AI 응답 및 도구 실행") if isinstance(b, Table) for row in b.rows]
-    assert [row[1] for row in assistant] == ["AI 응답", "도구 호출"]
+    assert sorted(row[2] for row in assistant) == ["AI 응답", "도구 호출"]
 
 
 def test_timeline_grouped_by_day_with_undated_last() -> None:

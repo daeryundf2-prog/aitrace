@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import re
@@ -9,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from importlib import metadata
 from pathlib import PurePath
-from typing import Any
+from typing import Any, NamedTuple
 
 from aitrace.core import catalog
 from aitrace.core.kinds import (
@@ -30,7 +31,6 @@ from aitrace.report.timeline import (
     focus_paths,
     is_relevant,
     norm_path,
-    split_days,
 )
 
 SECTION_KEYS: tuple[str, ...] = (
@@ -94,8 +94,8 @@ COLUMNS: dict[str, list[tuple[str, str, int]]] = {
         ("time_only", "timeline.col_time", 3),
         ("category_label", "timeline.col_kind", 2),
         ("actor_label", "timeline.col_actor", 1),
-        ("summary", "timeline.col_content", 6),
-        ("source_path", "timeline.col_source", 5),
+        ("summary", "timeline.col_content", 8),
+        ("source_path", "timeline.col_source", 4),
     ],
     "exports": [
         ("export_path", "col.export_path", 5),
@@ -104,9 +104,27 @@ COLUMNS: dict[str, list[tuple[str, str, int]]] = {
     ],
 }
 
-TIMELINE_LIMIT_PDF_DOCX = 5000
-TIMELINE_LIMIT_HTML = 20000
+# Caps that keep the main report bounded however many prompts a case holds.
+TIMELINE_ROW_CAP = 1500
+TIMELINE_LIMIT_PDF_DOCX = TIMELINE_ROW_CAP
+TIMELINE_LIMIT_HTML = TIMELINE_ROW_CAP
+TIMELINE_CHAT_DAY_THRESHOLD = 50  # a day with more relevant AI chat events collapses to one row per session
+PROMPT_ROW_CAP = 400  # user-input excerpt rows in chapter 3
+EXCERPT_CHARS = 600  # longest excerpt of any prompt or instruction in the main report
+TOOL_CALL_ROW_CAP = 100  # tool-call rows (file write/delete, transfer/remote commands) in chapter 3
+EXCERPT_DENSE_ROWS = 100  # above this many excerpt rows each excerpt is cut shorter so the PDF stays within its page budget
+EXCERPT_DENSE_CHARS = 240
+TIMELINE_COMPACT_ROWS = 200  # a timeline longer than this renders compact: shorter cells, smaller PDF type
+TIMELINE_SUMMARY_CHARS = 90
+TIMELINE_SOURCE_CHARS = 40
+SHA_PREFIX_CHARS = 12
+SESSION_ROW_CAP = 150  # busiest session rows in the chapter 3 count table
+MACHINE_ROW_CAP = 60  # busiest machine / source-file rows in the machine totals; the rest roll into one row
+SENSITIVE_TASKS: tuple[str, ...] = ("TASK-SECURITY", "TASK-EXFIL")  # query category flags that always get a row
 TIMELINE_CSV_PATH = "report/csv/timeline.csv"
+PROMPTS_VOLUME_PATH = "report/prompts.html"
+AI_QUERIES_CSV_PATH = "report/csv/ai_queries.csv"
+REPORT_JSON_PATH = "report/report.json"
 TOP_FINDINGS = 3
 SIGNAL_SUMMARY_LIMIT = 4
 
@@ -167,6 +185,13 @@ class ReportModel:
     timeline_relevant: tuple[bool, ...] = field(default=(), repr=False, compare=False)
     timeline_text: tuple[str, ...] = field(default=(), repr=False, compare=False)
     lifecycle_hidden: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
+    # Display-only side data, never serialized: per-artifact machine / channel / flags for prompt rows,
+    # (tool, session, kind) per timeline event for AI chat events, and the built document cache.
+    query_meta: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False, compare=False)
+    timeline_chat: tuple[tuple[str | None, str | None, str] | None, ...] = field(
+        default=(), repr=False, compare=False
+    )
+    doc_cache: dict[int, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         from aitrace.report.layout import chapter_outline
@@ -186,29 +211,96 @@ class ReportModel:
         rest = [row for i, row in enumerate(self.timeline) if i not in self.priority_rows]
         return (first + rest)[:limit]
 
-    def timeline_days(self, limit: int) -> list[tuple[str | None, list[dict[str, Any]]]]:
-        """Relevant rows per local date plus one collapsed row for the rest; undated days last."""
+    def timeline_view(self, limit: int) -> TimelineView:
+        """Relevant rows per local date plus one collapsed row for the rest; undated days last.
+
+        A day with more than TIMELINE_CHAT_DAY_THRESHOLD relevant AI chat events shows one row per session
+        instead of one per event. At most `limit` rows are kept; `omitted` counts the events behind the rest.
+        """
         flags = self.timeline_relevant or (True,) * len(self.timeline)
-        over = {i for i, keep in enumerate(flags) if keep}
-        over = set(sorted(over)[limit:])
-        rows: list[dict[str, Any]] = []
-        kept: list[bool] = []
+        chat = self.timeline_chat
+        days: dict[str | None, dict[str, Any]] = {}
         for i, row in enumerate(self.timeline):
-            if i in over:
+            local = row.get("ts_local")
+            day = str(local).split(" ", 1)[0] if local else None
+            slot = days.setdefault(day, {"rows": [], "chat": [], "dropped": 0})
+            if not flags[i]:
+                slot["dropped"] += 1
                 continue
             shown = dict(row)
-            if flags[i] and self.timeline_text:
+            shown["time_only"] = str(local).split(" ", 1)[1] if local and " " in str(local) else ""
+            if self.timeline_text:
                 shown["summary"] = self.timeline_text[i]
-            rows.append(shown)
-            kept.append(flags[i])
-        grouped = split_days(rows, kept)
+            info = chat[i] if chat else None
+            slot["chat" if info is not None else "rows"].append((i, shown, info))
+        keyed: list[tuple[int, str | None, dict[str, Any]]] = []
+        aggregated = False
+        for day, slot in days.items():
+            events = slot["chat"]
+            if len(events) > TIMELINE_CHAT_DAY_THRESHOLD:
+                aggregated = True
+                keyed.extend((order, day, row) for order, row in self._aggregate_chat(events))
+            else:
+                keyed.extend((i, day, row) for i, row, _ in events)
+            keyed.extend((i, day, row) for i, row, _ in slot["rows"])
+        keyed.sort(key=lambda item: item[0])
+        omitted = sum(int(row.get("count", 1)) for _, _, row in keyed[limit:])
+        by_day: dict[str | None, list[dict[str, Any]]] = {day: [] for day in days}
+        for _, day, row in keyed[:limit]:
+            by_day[day].append(row)
         result: list[tuple[str | None, list[dict[str, Any]]]] = []
-        for day, (shown_rows, dropped) in grouped.items():
-            if dropped:
-                shown_rows.append(collapsed_row(dropped, self.lang, TIMELINE_CSV_PATH))
-            result.append((day, shown_rows))
+        for day, shown_rows in by_day.items():
+            if days[day]["dropped"]:
+                shown_rows.append(collapsed_row(days[day]["dropped"], self.lang, TIMELINE_CSV_PATH))
+            if shown_rows:
+                result.append((day, shown_rows))
         result.sort(key=lambda item: (item[0] is None, item[0] or ""))
-        return result
+        return TimelineView(result, omitted, aggregated)
+
+    def _aggregate_chat(
+        self, events: Sequence[tuple[int, dict[str, Any], tuple[str | None, str | None, str] | None]]
+    ) -> list[tuple[int, dict[str, Any]]]:
+        sessions: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+        for i, row, info in events:
+            assert info is not None
+            tool, session, kind = info
+            slot = sessions.get((tool, session))
+            if slot is None:
+                slot = sessions[(tool, session)] = {"first": i, "row": row, "u": 0, "a": 0, "c": 0, "times": []}
+            slot[kind] += 1
+            if row["time_only"]:
+                slot["times"].append(row["time_only"])
+        out: list[tuple[int, dict[str, Any]]] = []
+        for (tool, session), slot in sessions.items():
+            times = slot["times"]
+            first = slot["row"]
+            summary = t(
+                "timeline.chat_aggregate",
+                self.lang,
+                tool=tool or t("sec.unknown_tool", self.lang),
+                session=session or "-",
+                u=slot["u"],
+                a=slot["a"],
+                c=slot["c"],
+                first=min(times, default="-"),
+                last=max(times, default="-"),
+            )
+            out.append(
+                (
+                    slot["first"],
+                    {
+                        **first,
+                        "time_only": min(times, default=""),
+                        "summary": summary,
+                        "aggregated": True,
+                        "count": slot["u"] + slot["a"] + slot["c"],
+                    },
+                )
+            )
+        return out
+
+    def timeline_days(self, limit: int) -> list[tuple[str | None, list[dict[str, Any]]]]:
+        return self.timeline_view(limit).days
 
     def lifecycle_rows(self) -> list[dict[str, Any]]:
         return [row for i, row in enumerate(self.file_lifecycle) if i not in self.lifecycle_hidden]
@@ -256,11 +348,19 @@ class ReportModel:
         return _pairs(self.methodology, spec, self.lang)
 
     def timeline_note(self, limit: int, lang: str) -> str | None:
-        total = sum(self.timeline_relevant) if self.timeline_relevant else len(self.timeline)
-        omitted = total - limit
+        return self.timeline_note_for(self.timeline_view(limit).omitted, limit, lang)
+
+    @staticmethod
+    def timeline_note_for(omitted: int, limit: int, lang: str) -> str | None:
         if omitted <= 0:
             return None
         return t("timeline.note", lang, limit=limit, omitted=omitted, csv=TIMELINE_CSV_PATH)
+
+
+class TimelineView(NamedTuple):
+    days: list[tuple[str | None, list[dict[str, Any]]]]
+    omitted: int
+    aggregated: bool
 
 
 def _label(key: str, lang: str, fallback: str) -> str:
@@ -638,6 +738,37 @@ def _instructions_section(
     return rows
 
 
+def _query_meta(
+    messages: Sequence[Artifact],
+    presence: Sequence[Artifact],
+    instructions: Sequence[Mapping[str, Any]],
+    tz: str,
+) -> dict[str, dict[str, Any]]:
+    """Machine, channel and query-category flags per artifact id; display-only, not part of report.json."""
+    sensitive = [(rule, pattern) for rule, pattern in catalog.TASK_RULES if rule in SENSITIVE_TASKS]
+    meta: dict[str, dict[str, Any]] = {}
+    for a in messages:
+        entry: dict[str, Any] = {"machine": a.data.get("machine"), "channel": a.data.get("channel")}
+        if a.data.get("role") == "user":
+            text = " ".join(str(a.data.get("text", "")).split())
+            entry["flags"] = [rule for rule, pattern in sensitive if pattern.search(text)]
+        meta[a.id] = entry
+    wanted = {str(row["artifact_id"]) for row in instructions}
+    for a in presence:
+        if a.id in wanted:
+            meta[a.id] = {
+                "machine": a.data.get("machine"),
+                "kind": a.data.get("kind"),
+                "hash": a.data.get("hash"),
+                "last_local": _local(a.data.get("period_end"), tz),
+            }
+    return meta
+
+
+def text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
 def _tool_calls_section(
     calls: Sequence[Artifact], first_event: Mapping[str, Any], tz: str, lang: str
 ) -> list[dict[str, Any]]:
@@ -934,8 +1065,11 @@ def build_report_model(
             aid for cat in _DISPLAY_LINK_CATEGORIES for f in by_category[cat] for aid in f.artifact_ids
         ),
     )
+    chat_kind = {a.id: ("u" if a.data.get("role") == "user" else "a") for a in buckets[ArtifactKind.AI_CHAT_MESSAGE]}
+    chat_kind.update({a.id: "c" for a in buckets[ArtifactKind.AI_TOOL_CALL]})
     relevant: list[bool] = []
     texts: list[str] = []
+    chat_events: list[tuple[str | None, str | None, str] | None] = []
 
     timeline: list[dict[str, Any]] = []
     priority: set[int] = set()
@@ -943,6 +1077,10 @@ def build_report_model(
         art = by_id.get(e.artifact_id)
         relevant.append(is_relevant(e, art, focus))
         texts.append(display_summary(e, art, lang))
+        kind = chat_kind.get(e.artifact_id)
+        chat_events.append(
+            (art.data.get("tool"), art.data.get("session_id"), kind) if art is not None and kind else None
+        )
         timeline.append(
             {
                 "ts_utc": fmt_utc(e.ts_utc) if e.ts_utc is not None else None,
@@ -981,6 +1119,7 @@ def build_report_model(
         for r in runs
     ]
 
+    instructions = _instructions_section(buckets[ArtifactKind.AI_APP_PRESENCE], first_event, tz, lang)
     return ReportModel(
         case=_case_section(case, lang),
         evidence=_evidence_section(evidences, lang),
@@ -1017,7 +1156,11 @@ def build_report_model(
             i for i, f in enumerate(by_category[FindingCategory.FILE_LIFECYCLE]) if _inventory_only(f, by_id, focus)
         ),
         tool_calls=_tool_calls_section(buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang),
-        instructions=_instructions_section(buckets[ArtifactKind.AI_APP_PRESENCE], first_event, tz, lang),
+        instructions=instructions,
+        query_meta=_query_meta(
+            buckets[ArtifactKind.AI_CHAT_MESSAGE], buckets[ArtifactKind.AI_APP_PRESENCE], instructions, tz
+        ),
+        timeline_chat=tuple(chat_events),
         generated_files=_generated_files_section(
             attributions, related, buckets[ArtifactKind.AI_TOOL_CALL], first_event, tz, lang
         ),

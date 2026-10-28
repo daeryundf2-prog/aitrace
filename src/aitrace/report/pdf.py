@@ -29,6 +29,9 @@ GRAY = (128, 128, 128)
 LINE_MM = 0.18
 KEEP_WITH_NEXT_MM = 35
 CELL_PAD_MM = 1.3
+COMPACT_PT = 7.5
+COMPACT_LINE_MM = 3.3
+COMPACT_PAD_MM = 0.5
 
 
 class _ReportPDF(FPDF):
@@ -84,17 +87,18 @@ def _paragraph(pdf: _ReportPDF, text: str) -> None:
     pdf.ln(1.5)
 
 
-def _row_fits_page(pdf: _ReportPDF, row: Sequence[str], widths: Sequence[float]) -> bool:
-    pdf.set_font(SERIF, "", TABLE_PT)
+def _row_fits_page(pdf: _ReportPDF, row: Sequence[str], widths: Sequence[float], *, compact: bool = False) -> bool:
+    size, line = (COMPACT_PT, COMPACT_LINE_MM) if compact else (TABLE_PT, TABLE_LINE_MM)
+    pdf.set_font(SERIF, "", size)
     most = 0
     for cell, width in zip(row, widths, strict=True):
         lines = cast(
             list[str],
-            pdf.multi_cell(width - 2 * pdf.c_margin, TABLE_LINE_MM, cell, dry_run=True, output="LINES"),
+            pdf.multi_cell(width - 2 * pdf.c_margin, line, cell, dry_run=True, output="LINES"),
         )
         most = max(most, len(lines))
     usable = pdf.h - pdf.t_margin - pdf.b_margin
-    return most * TABLE_LINE_MM <= usable * ROW_FIT_RATIO
+    return most * line <= usable * ROW_FIT_RATIO
 
 
 def _grid(
@@ -102,16 +106,19 @@ def _grid(
     headers: Sequence[str] | None,
     rows: Sequence[Sequence[str]],
     widths: Sequence[float],
+    *,
+    compact: bool = False,
 ) -> None:
-    pdf.set_font(SERIF, "", TABLE_PT)
+    size, line, pad = (COMPACT_PT, COMPACT_LINE_MM, COMPACT_PAD_MM) if compact else (TABLE_PT, TABLE_LINE_MM, CELL_PAD_MM)
+    pdf.set_font(SERIF, "", size)
     with pdf.table(
-        headings_style=FontFace(emphasis="BOLD", size_pt=TABLE_PT, color=(0, 0, 0), fill_color=HEAD_FILL),
+        headings_style=FontFace(emphasis="BOLD", size_pt=size, color=(0, 0, 0), fill_color=HEAD_FILL),
         text_align="LEFT",
         col_widths=tuple(widths),
-        line_height=TABLE_LINE_MM,
+        line_height=line,
         borders_layout="ALL",
         v_align="TOP",
-        padding=CELL_PAD_MM,
+        padding=pad,
         first_row_as_headings=headers is not None,
     ) as table:
         if headers is not None:
@@ -132,15 +139,15 @@ def _table(pdf: _ReportPDF, block: Table) -> None:
         pdf.cell(0, 6, block.caption, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     fitting: list[Sequence[str]] = []
     for row in block.rows:
-        if _row_fits_page(pdf, row, widths):
+        if _row_fits_page(pdf, row, widths, compact=block.compact):
             fitting.append(row)
             continue
         if fitting:
-            _grid(pdf, block.headers, fitting, widths)
+            _grid(pdf, block.headers, fitting, widths, compact=block.compact)
             fitting = []
         _paragraph(pdf, "\n".join(f"{h}: {c}" for h, c in zip(block.headers, row, strict=True)))
     if fitting:
-        _grid(pdf, block.headers, fitting, widths)
+        _grid(pdf, block.headers, fitting, widths, compact=block.compact)
 
 
 def _heading(pdf: _ReportPDF, block: Heading, *, fresh_page: bool = False) -> None:

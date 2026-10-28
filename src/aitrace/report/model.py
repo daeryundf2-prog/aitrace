@@ -142,6 +142,11 @@ GENERATED_KV_ROWS = 20  # up to this many judged items render as one detail bloc
 # Hermes instruction kinds listed row by row in chapter 3; every other kind (skills, workspace instructions,
 # templates, config backups) is summarised by count there, with the full text kept in the prompts volume.
 INSTRUCTION_ROW_KINDS: tuple[str, ...] = ("persona", "rules", "memory", "export_system_prompt")
+INSTRUCTION_GROUP_MIN = (
+    5  # this many prompts from one file get their own subheading instead of repeating the path
+)
+ANSWER_SAMPLE_ROWS = 30  # AI responses sampled across the period when the full list exceeds the row cap
+ANSWER_EXCERPT_CHARS = 200
 ATTRIBUTIONS_CSV_PATH = "report/csv/attributions.csv"
 TIMELINE_CSV_PATH = "report/csv/timeline.csv"
 PROMPTS_VOLUME_PATH = "report/prompts.html"

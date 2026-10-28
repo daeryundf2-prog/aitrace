@@ -276,7 +276,7 @@ def test_instruction_section_counts_skills_and_lists_persona_rows() -> None:
     assert any("report/prompts.html" in p for p in _paragraphs(blocks))
 
 
-def test_dense_instruction_table_repeats_tool_and_path_on_every_row() -> None:
+def test_prompts_from_one_file_sit_under_a_file_heading_without_repeating_the_path() -> None:
     model = sample.make_model("ko")
     base = dict(model.instructions[0])
     model.instructions = [
@@ -285,11 +285,11 @@ def test_dense_instruction_table_repeats_tool_and_path_on_every_row() -> None:
     ]
     model.query_meta.update({f"sp{i}": {"source_kind": "export_system_prompt"} for i in range(120)})
     blocks = _between(build_document(model), 2, "시스템 지시문·페르소나·규칙")
+    heads = [b.text for b in blocks if isinstance(b, Heading) and b.level == 3]
+    assert any("/03/system_prompts.md (120건)" in h for h in heads)
     table = next(b for b in blocks if isinstance(b, Table) and len(b.rows) >= 120)
-    paths = [row[1] for row in table.rows]
-    assert paths.count("/03/system_prompts.md") == 120
-    assert not any("\u3003" in cell for row in table.rows for cell in row)
-    assert not any("\u3003" in p for p in _paragraphs(blocks))
+    assert len(table.headers) == 4
+    assert not any("/03/system_prompts.md" in cell or "\u3003" in cell for row in table.rows for cell in row)
 
 
 def test_opinion_does_not_say_records_exist_when_there_are_none() -> None:

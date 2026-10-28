@@ -370,6 +370,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "Counts by tool, machine (profile) and session; records without a machine label are grouped by source file. {n} session(s) found. Full text: {volume}.",
     ),
     "instr.col_kind": ("구분", "Kind"),
+    "instr.group": ("{tool} · {kind} · {source} ({n}건)", "{tool} · {kind} · {source} ({n})"),
+    "instr.single": ("개별 파일 {n}건", "Single files ({n})"),
     "instr.col_path": ("경로", "Path"),
     "instr.col_size": ("크기(바이트)", "Size (bytes)"),
     "instr.col_seen": ("최초~최종 확인(현지)", "First ~ last seen (local)"),

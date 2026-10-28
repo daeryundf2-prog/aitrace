@@ -10,6 +10,8 @@ from typing import Any
 from aitrace.core.time import fmt_local, fmt_utc, from_iso
 from aitrace.report.i18n import t
 from aitrace.report.model import (
+    ANSWER_EXCERPT_CHARS,
+    ANSWER_SAMPLE_ROWS,
     ATTRIBUTIONS_CSV_PATH,
     COLUMNS,
     EXCERPT_CHARS,
@@ -17,6 +19,7 @@ from aitrace.report.model import (
     EXCERPT_DENSE_ROWS,
     GENERATED_KV_ROWS,
     GENERATED_ROW_CAP,
+    INSTRUCTION_GROUP_MIN,
     INSTRUCTION_ROW_KINDS,
     MACHINE_ROW_CAP,
     PROMPTS_VOLUME_PATH,
@@ -809,36 +812,59 @@ def _instruction_section(b: _Builder, model: ReportModel) -> None:
     if not ordered:
         return
     b.para(t("instr.note", lang, n=len(ordered), chars=chars, volume=PROMPTS_VOLUME_PATH))
-    rows = []
+    groups: dict[tuple[str, str, str], list[tuple[str, dict[str, Any]]]] = {}
     for (source, sha), slot in ordered:
         row = slot["row"]
         kind = _text(row.get("role_label"))
         extra_kind = (meta.get(str(row.get("artifact_id"))) or {}).get("kind")
         if extra_kind:
             kind = f"{kind} ({extra_kind})"
-        rows.append(
-            (
-                f"{tool_label(row.get('tool'), lang)}\n{kind}",
-                source,
-                f"{len(slot['text'].encode('utf-8', 'replace')):,}",
-                _seen(slot["first_local"], slot["last_local"]),
-                sha[:SHA_PREFIX_CHARS],
-                _excerpt(slot["text"], chars),
+        groups.setdefault((tool_label(row.get("tool"), lang), kind, source), []).append((sha, slot))
+    single: list[tuple[str, ...]] = []
+    for (tool, kind, source), items in groups.items():
+        if len(items) < INSTRUCTION_GROUP_MIN:
+            single.extend(
+                (f"{tool}\n{kind}", source, *_instruction_cells(sha, slot, chars)) for sha, slot in items
             )
+            continue
+        b.sub(t("instr.group", lang, tool=tool, kind=kind, source=source, n=len(items)))
+        b.table(
+            (
+                t("instr.col_size", lang),
+                t("instr.col_seen", lang),
+                t("instr.col_sha", lang),
+                t("instr.col_excerpt", lang, n=chars),
+            ),
+            [_instruction_cells(sha, slot, chars) for sha, slot in items],
+            (2, 4, 3, 12),
+            raw=(3,),
+            compact=len(items) > EXCERPT_DENSE_ROWS,
         )
-    b.table(
-        (
-            t("counts.col_tool", lang) + " / " + t("instr.col_kind", lang),
-            t("instr.col_path", lang),
-            t("instr.col_size", lang),
-            t("instr.col_seen", lang),
-            t("instr.col_sha", lang),
-            t("instr.col_excerpt", lang, n=chars),
-        ),
-        rows,
-        (2, 3, 2, 4, 3, 12) if len(rows) > EXCERPT_DENSE_ROWS else (3, 5, 2, 4, 3, 9),
-        raw=(5,),
-        compact=len(rows) > EXCERPT_DENSE_ROWS,
+    if single:
+        if len(single) < len(ordered):
+            b.sub(t("instr.single", lang, n=len(single)))
+        b.table(
+            (
+                t("counts.col_tool", lang) + " / " + t("instr.col_kind", lang),
+                t("instr.col_path", lang),
+                t("instr.col_size", lang),
+                t("instr.col_seen", lang),
+                t("instr.col_sha", lang),
+                t("instr.col_excerpt", lang, n=chars),
+            ),
+            single,
+            (2, 3, 2, 4, 3, 12) if len(single) > EXCERPT_DENSE_ROWS else (3, 5, 2, 4, 3, 9),
+            raw=(5,),
+            compact=len(single) > EXCERPT_DENSE_ROWS,
+        )
+
+
+def _instruction_cells(sha: str, slot: Mapping[str, Any], chars: int) -> tuple[str, str, str, str]:
+    return (
+        f"{len(slot['text'].encode('utf-8', 'replace')):,}",
+        _seen(slot["first_local"], slot["last_local"]),
+        sha[:SHA_PREFIX_CHARS],
+        _excerpt(slot["text"], chars),
     )
 
 
@@ -1134,7 +1160,7 @@ def _assistant_section(b: _Builder, model: ReportModel) -> None:
         rows = sorted([*answers, *calls], key=_stamp)
     else:
         risky = [c for c in calls if _risky_call(c)][:TOOL_CALL_ROW_CAP]
-        room = TOOL_CALL_ROW_CAP - len(risky)
+        room = min(TOOL_CALL_ROW_CAP - len(risky), ANSWER_SAMPLE_ROWS)
         ordered = sorted(answers, key=_stamp)
         sampled = (
             [ordered[int(i * len(ordered) / room)] for i in range(min(room, len(ordered)))] if room else []
@@ -1170,7 +1196,9 @@ def _assistant_section(b: _Builder, model: ReportModel) -> None:
                 _text(r.get("ts_local")) or "-",
                 _where(r, model, machines),
                 _text(r.get("role_label")),
-                _excerpt(r.get("text"), chars),
+                _excerpt(" ".join(_text(r.get("text")).split()), ANSWER_EXCERPT_CHARS)
+                if r.get("role") == "assistant"
+                else _excerpt(r.get("text"), chars),
                 _text(r.get("source")),
             )
             for r in rows

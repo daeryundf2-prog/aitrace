@@ -19,6 +19,7 @@ BUILTIN_PLUGINS: list[str] = [
     "aitrace.plugins.ai.omo",
     "aitrace.plugins.ai.opencode",
     "aitrace.plugins.ai.hermes",
+    "aitrace.plugins.ai.hermes_export",
     "aitrace.plugins.browser.history_downloads",
     "aitrace.plugins.browser.cache_images",
     "aitrace.plugins.shell.history",

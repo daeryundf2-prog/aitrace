@@ -343,6 +343,10 @@ LIMITATIONS: dict[SignalType | str, dict[str, str] | list[dict[str, str]]] = {
         "ko": "USB 연결 기록은 파일 복사를 증명하지 않는다.",
         "en": "USB insertion does not prove a file copy",
     },
+    "hermes_export_tz": {
+        "ko": "Hermes 추출본의 시각은 시간대 표기가 없는 서버 현지 시각이므로 Asia/Seoul(+09:00)로 가정하여 변환하였다.",
+        "en": "Hermes export times are server wall-clock times without a zone; they were read as Asia/Seoul (+09:00)",
+    },
     "GLOBAL": [
         {
             "ko": "시스템 시계 오차로 시각이 실제와 다를 수 있다.",

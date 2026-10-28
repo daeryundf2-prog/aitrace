@@ -767,7 +767,7 @@ def _total_row(tool: str, machine: str, sessions: int, g: _SessionCount) -> tupl
         f"{g.user:,}",
         f"{g.ai:,}",
         f"{g.calls:,}",
-        ", ".join(g.channels) or "-",
+        "\n".join(g.channels) or "-",
     )
 
 

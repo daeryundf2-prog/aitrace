@@ -374,7 +374,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "instr.group": ("{tool} · {kind} · {source} ({n}건)", "{tool} · {kind} · {source} ({n})"),
     "instr.single": ("개별 파일 {n}건", "Single files ({n})"),
     "instr.col_path": ("경로", "Path"),
-    "instr.col_size": ("크기(바이트)", "Size (bytes)"),
+    "instr.col_size": ("바이트 수", "Bytes"),
     "instr.col_seen": ("최초~최종 확인(현지)", "First ~ last seen (local)"),
     "instr.col_sha": ("SHA-256(앞 12자)", "SHA-256 (first 12)"),
     "instr.col_excerpt": ("발췌(앞 {n}자)", "Excerpt (first {n} chars)"),
@@ -1065,7 +1065,7 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     ),
     "instr.col_dir": ("상위 디렉터리", "Top directory"),
     "instr.col_count": ("파일 수", "Files"),
-    "instr.col_total": ("합계 크기(바이트)", "Total size (bytes)"),
+    "instr.col_total": ("합계 바이트 수", "Total bytes"),
     "instr.kind.skill": ("스킬(SKILL.md)", "Skill (SKILL.md)"),
     "instr.kind.workspace_instruction": (
         "작업공간 지시문(AGENTS/CLAUDE)",

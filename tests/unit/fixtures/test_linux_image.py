@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 from dissect.target import Target
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -36,6 +38,9 @@ def test_planted_paths_exist_in_image() -> None:
 
 
 def test_rebuild_yields_same_planted_file_listing(tmp_path: Path) -> None:
+    missing = [tool for tool in ("mke2fs", "ewfacquire") if shutil.which(tool) is None]
+    if missing:
+        pytest.skip(f"host tool missing: {', '.join(missing)}")
     builder = _load_builder()
     rebuilt = builder.build_image(tmp_path)
     assert _present_paths(rebuilt, builder.PLANTED_PATHS) == _present_paths(

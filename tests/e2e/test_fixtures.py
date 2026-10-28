@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import subprocess
+import sys
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,9 @@ def _sha256(path: Path) -> str:
 
 def _run_analyze(image: Path, case_dir: Path, case_number: str, extra: tuple[str, ...] = ()) -> None:
     cmd = [
-        str(AITRACE),
+        sys.executable,
+        "-m",
+        "aitrace.cli.main",
         "analyze",
         str(image),
         "--case-dir",

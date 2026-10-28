@@ -117,6 +117,20 @@ def test_exact_agent_write_is_ai_generated_strong(store: CaseStore) -> None:
     assert findings[0].confidence == att.confidence
 
 
+def test_crlf_copy_of_agent_write_is_still_exact(store: CaseStore) -> None:
+    crlf = P.replace("\n", "\r\n")
+    store.add(
+        [
+            *_tool_call("tc1", "/home/alice/a.md", P, T0),
+            _file("f1", "/home/alice/a.md", content=crlf, mtime=T0 + timedelta(hours=1), text_sample=crlf),
+        ]
+    )
+    attrs, _ = _run(store)
+    att = attrs["/home/alice/a.md"]
+    assert att.verdict is Verdict.AI_GENERATED
+    assert att.confidence == pytest.approx(0.90)
+
+
 def test_agent_write_with_later_human_edit_is_ai_assisted(store: CaseStore) -> None:
     edited = Q + "\n사람이 추가한 결론: 예산 10% 삭감.\n"
     store.add(

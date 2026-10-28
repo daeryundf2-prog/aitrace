@@ -155,6 +155,13 @@ class _ToolWrite:
     content: str | None
 
 
+TEXT_SAMPLE_LIMIT = 64 * 1024
+
+
+def _lf(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
 def _key(path: str) -> str:
     return "f:" + normalize(path, OsFamily.UNKNOWN).casefold()
 
@@ -361,6 +368,13 @@ class AttributionAnalyzer:
         content_calls = [c for c in calls if c.content_sha256 is not None]
         file_sha = info.sha256 if info else None
         exact = file_sha is not None and any(c.content_sha256 == file_sha for c in content_calls)
+        if not exact and info is not None and info.sample is not None:
+            # Same text with CRLF vs LF line endings (e.g. a Windows checkout or editor) is the same content.
+            sample = _lf(info.sample)
+            exact = any(
+                c.content is not None and len(c.content) < TEXT_SAMPLE_LIMIT and _lf(c.content) == sample
+                for c in content_calls
+            )
         if exact:
             subj.add(SignalType.AGENT_TOOL_WRITE, cap, ids, "file content sha256 equals agent tool-call content")
         else:

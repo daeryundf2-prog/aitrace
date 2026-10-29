@@ -74,6 +74,27 @@ _DENIAL = re.compile(
     r"|(?:방지|막기|차단|금지)[^.\n]{0,8}?(?:유출|반출|우회)",
     re.IGNORECASE,
 )
+# Facts a reviewer must see first, decided by the text alone. Order is the reading order in the brief.
+FACT_KINDS: tuple[str, ...] = ("document", "deletion", "personal", "credential")
+_DOCUMENT_NOTE = re.compile(r"\(문서 첨부: ")
+_DELETION = re.compile(
+    r"삭제했|삭제해\s*줘|지웠|지운\s*거|휴지통|비웠|포맷했|영구\s*삭제|기록을?\s*지워|로그를?\s*지워|\bwipe\b|\bshred\b",
+    re.IGNORECASE,
+)
+_PHONE = re.compile(r"(?<!\d)(01[016789])[-. ]?\d{3,4}[-. ]?\d{4}(?!\d)")
+_RRN = re.compile(r"(?<![\d_])\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])-[1-4]\d{6}(?!\d)")
+_EMAIL = re.compile(
+    r"(?<!ssh )(?<!-l )(?<![\w.+-])([\w.+-])[\w.+-]*@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})"
+)
+_REMOTE_COMMAND = re.compile(r"\b(?:ssh|scp|sftp|rsync)\b")
+
+
+def _mail(match: re.Match[str]) -> bool:
+    """An address on a line that starts a remote shell command is a login, not an e-mail address."""
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    return _REMOTE_COMMAND.search(match.string, line_start, match.start()) is None
+
+
 _GATEWAY_GENERATED = re.compile(r"\[INTERNAL NOTIFICATION [^\]]*not written by a human user")
 _SKILL_INVOKED = re.compile(
     r'^\s*\[IMPORTANT: The user has invoked the "(?P<skill>[^"]+)" skill[^\]]*\]', re.DOTALL
@@ -160,6 +181,27 @@ def normalise(text: str, source: str = "") -> tuple[str, str, str | None, bool]:
     return HUMAN, body or "(이미지 첨부)", platform, attachment
 
 
+def facts_of(text: str) -> list[str]:
+    found = {
+        "document": _DOCUMENT_NOTE.search(text) is not None,
+        "deletion": _DELETION.search(text) is not None,
+        "personal": bool(
+            _PHONE.search(text) or _RRN.search(text) or any(_mail(m) for m in _EMAIL.finditer(text))
+        ),
+        "credential": any(p.search(text) for _, p in catalog.SECRET_PATTERNS),
+    }
+    return [kind for kind in FACT_KINDS if found[kind]]
+
+
+def mask_sensitive(text: str) -> str:
+    """Phone numbers, resident numbers, e-mail addresses and API keys masked for a document that is handed on."""
+    for _, pattern in catalog.SECRET_PATTERNS:
+        text = pattern.sub(lambda m: catalog.redact(m.group(0)), text)
+    text = _RRN.sub("******-*******", text)
+    text = _PHONE.sub(lambda m: f"{m.group(1)}-****-****", text)
+    return _EMAIL.sub(lambda m: f"{m.group(1)}***@{m.group(2)}" if _mail(m) else m.group(0), text)
+
+
 def denies_sensitive(text: str) -> bool:
     return _DENIAL.search(" ".join(text.split())) is not None
 
@@ -215,6 +257,7 @@ def build_questions(
             "attachment": attachment,
             "topics": _topics(text),
             "denial": denies_sensitive(text),
+            "facts": facts_of(text),
             "source": source,
             "artifact_id": row.get("artifact_id"),
             "duplicates": 0,
@@ -234,6 +277,7 @@ def build_questions(
         "attachments": sum(1 for q in questions if q["attachment"]),
         "by_month": _by_month(questions),
         "by_length": _by_length(questions),
+        "facts": {kind: sum(1 for q in questions if kind in q["facts"]) for kind in FACT_KINDS},
         "ai_inputs": sorted(
             ai_inputs, key=lambda a: (a["ts_utc"] is None, str(a["ts_utc"] or ""), a["machine"])
         ),

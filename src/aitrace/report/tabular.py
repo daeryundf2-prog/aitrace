@@ -19,6 +19,7 @@ QUESTION_COLUMNS: tuple[str, ...] = (
     "channel",
     "session",
     "topics",
+    "facts",
     "attachment",
     "duplicates",
     "text",

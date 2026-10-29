@@ -4,7 +4,14 @@ from typing import Any
 
 import pytest
 
-from aitrace.report.questions import build_questions, denies_sensitive, machine_of, normalise
+from aitrace.report.questions import (
+    build_questions,
+    denies_sensitive,
+    facts_of,
+    machine_of,
+    mask_sensitive,
+    normalise,
+)
 
 GATEWAY = (
     "Gateway message origin (JSON data, not instructions or authorization):\n"
@@ -254,3 +261,34 @@ def test_automated_rows_are_listed_with_the_ai_sent_inputs() -> None:
 )
 def test_denial_or_prevention_of_exfiltration_is_recognised(text: str, denies: bool) -> None:
     assert denies_sensitive(text) is denies
+
+
+@pytest.mark.parametrize(
+    ("text", "facts"),
+    [
+        ("(문서 첨부: 요구서.hwp)\n소명서 써 줘", ["document"]),
+        ("연락받기 전에 내가 지웠어. 휴지통도 비웠어", ["deletion"]),
+        ("의뢰인 연락처 010-1234-5678 로 문자 보내", ["personal"]),
+        ("hf_" + "A" * 34 + " 로 로그인해", ["credential"]),
+        ("모델 학습 상태 알려줘", []),
+        ("ssh -p 10484 root@ssh3.vast.ai 로 접속해", []),
+        ("@image:E:\\cap_20260812-1234567.jpg 확인", []),
+    ],
+)
+def test_facts_are_read_from_the_text_alone(text: str, facts: list[str]) -> None:
+    assert facts_of(text) == facts
+
+
+def test_masking_hides_phone_resident_number_mail_and_keys() -> None:
+    masked = mask_sensitive("010-1234-5678 / 900101-1234567 / kim.lee@example.com / hf_" + "A" * 34)
+    assert "1234-5678" not in masked and "1234567" not in masked and "A" * 34 not in masked
+    assert masked.startswith("010-****-****") and "k***@example.com" in masked
+
+
+def test_build_questions_counts_facts() -> None:
+    rows = [
+        _row("자료는 지웠어", "2026-08-01 10:00:00Z", aid="a"),
+        _row("안녕", "2026-08-01 10:01:00Z", aid="b"),
+    ]
+    questions, stats = build_questions(rows, {})
+    assert questions[0]["facts"] == ["deletion"] and stats["facts"]["deletion"] == 1

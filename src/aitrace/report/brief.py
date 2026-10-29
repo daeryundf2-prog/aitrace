@@ -22,12 +22,14 @@ from aitrace.report.model import (
     SENSITIVE_TASKS,
     ReportModel,
 )
+from aitrace.report.questions import FACT_KINDS, mask_sensitive
 
 BRIEF_PDF_PATH = "report/brief.pdf"
 BRIEF_DOCX_PATH = "report/brief.docx"
 EXAMPLE_CHARS = 100
 FLAGGED_CHARS = 200
 FLAGGED_CAP = 15
+FACT_CAP = 10
 TOP_TOPICS = 3
 WORK_HOURS = range(9, 18)
 # Chapter numbers of the appraisal, in the order layout._build_document emits them.
@@ -70,7 +72,7 @@ def _n(value: Any) -> str:
 
 
 def _one_line(text: Any, limit: int) -> str:
-    flat = " ".join(str(text or "").split())
+    flat = " ".join(mask_sensitive(str(text or "")).split())
     return flat if len(flat) <= limit else flat[:limit].rstrip() + "…"
 
 
@@ -180,6 +182,12 @@ def _conclusion(b: Builder, model: ReportModel) -> None:
     else:
         flagged = t("brief.a.no_flagged", lang)
     rows.append((t("brief.q.flagged", lang), flagged))
+    facts = stats.get("facts") or {}
+    if any(facts.get(kind) for kind in FACT_KINDS):
+        found = t("brief.a.facts", lang, **{kind: _n(facts.get(kind)) for kind in FACT_KINDS})
+    else:
+        found = t("brief.a.no_facts", lang)
+    rows.append((t("brief.q.facts", lang), found))
 
     generated = len(model.generated_files)
     rows.append(
@@ -355,6 +363,7 @@ def _what(b: Builder, model: ReportModel) -> None:
         )
     else:
         b.para(t("brief.a.no_topics", lang))
+    _facts(b, model)
     b.section(t("brief.sec.flagged", lang))
     flagged = _flagged(model.questions)
     if not flagged:
@@ -386,6 +395,45 @@ def _what(b: Builder, model: ReportModel) -> None:
         rows,
         (3, 2, 7),
     )
+
+
+def _where_cell(q: Mapping[str, Any], lang: str, repeats: int) -> str:
+    where = t(
+        "brief.no_when_device",
+        lang,
+        no=q.get("no"),
+        when=str(q.get("ts_local") or "")[:16],
+        machine=q.get("machine") or "-",
+    )
+    return where + ("\n" + t("brief.repeat", lang, n=repeats) if repeats > 1 else "")
+
+
+def _facts(b: Builder, model: ReportModel) -> None:
+    lang = b.lang
+    b.section(t("brief.sec.facts", lang))
+    if not any(q.get("facts") for q in model.questions):
+        b.para(t("brief.a.no_facts", lang))
+        return
+    b.para(t("brief.facts_intro", lang, volume=QUESTIONS_VOLUME_PATH, csv=QUESTIONS_CSV_PATH))
+    for kind in FACT_KINDS:
+        hits = [q for q in model.questions if kind in (q.get("facts") or ())]
+        if not hits:
+            continue
+        hits.sort(key=lambda q: (_pasted(q.get("text")), int(q.get("no") or 0)))
+        unique: dict[str, list[Mapping[str, Any]]] = {}
+        for q in hits:
+            unique.setdefault(" ".join(str(q.get("text") or "").split()), []).append(q)
+        shown = list(unique.values())[:FACT_CAP]
+        b.sub(t(f"brief.fact.{kind}", lang))
+        b.para(t("brief.fact_count", lang, n=_n(len(hits)), shown=len(shown)))
+        b.table(
+            (t("brief.col.no_when_device", lang), t("brief.col.input", lang)),
+            [
+                (_where_cell(same[0], lang, len(same)), _one_line(same[0].get("text"), FLAGGED_CHARS))
+                for same in shown
+            ],
+            (3, 8),
+        )
 
 
 def _results(b: Builder, model: ReportModel) -> None:

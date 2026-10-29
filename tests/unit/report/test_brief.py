@@ -141,3 +141,30 @@ def test_the_same_flagged_sentence_is_listed_once_with_its_count() -> None:
     flagged = _tables(_chapter(build_brief_document(model), "무엇을 시켰는가"))[-1]
     assert [row[2] for row in flagged.rows].count("어제 자료는 내가 지웠어, 유출 방지 차원") == 1
     assert flagged.rows[0][0].endswith("같은 내용 2회")
+
+
+def test_key_facts_list_masked_inputs_by_kind() -> None:
+    model = sample.make_model("ko")
+    q = model.questions[0]
+    q["text"], q["facts"] = "고객 010-1234-5678 에게 연락했고 기록은 지웠어", ["deletion", "personal"]
+    model.question_stats["facts"] = {"document": 0, "deletion": 1, "personal": 1, "credential": 0}
+    blocks = _chapter(build_brief_document(model), "무엇을 시켰는가")
+    heads = [b.text for b in blocks if isinstance(b, Heading)]
+    assert "주요 입력 사실" in heads
+    assert heads.index("삭제했다는 표현이 든 입력") < heads.index("전화번호·주민등록번호·이메일이 든 입력")
+    cells = " ".join(c for table in _tables(blocks) for row in table.rows for c in row)
+    assert "010-****-****" in cells and "1234-5678" not in cells
+    answers = _answers(_tables(_chapter(build_brief_document(model), "결론 요약"))[0])
+    assert (
+        "삭제했다는 표현이 든 입력 1건"
+        in answers["문서 첨부, 삭제 표현, 개인정보, 인증정보가 담긴 입력이 있는가"]
+    )
+
+
+def test_no_key_facts_gives_a_none_line() -> None:
+    model = sample.make_model("ko")
+    for q in model.questions:
+        q["facts"] = []
+    model.question_stats["facts"] = {}
+    blocks = _chapter(build_brief_document(model), "무엇을 시켰는가")
+    assert t("brief.a.no_facts", "ko") in [b.text for b in blocks if isinstance(b, Para)]

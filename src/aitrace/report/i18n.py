@@ -659,6 +659,34 @@ _LAYOUT: dict[str, tuple[str, str]] = {
         "Example (earliest written sentence)",
     ),
     "brief.example": ("#{no} {when} {machine}: {text}", "#{no} {when} {machine}: {text}"),
+    "brief.q.facts": (
+        "문서 첨부, 삭제 표현, 개인정보, 인증정보가 담긴 입력이 있는가",
+        "Any inputs with an attached document, a deletion statement, personal data or credentials",
+    ),
+    "brief.a.facts": (
+        "문서를 첨부한 입력 {document}건, 삭제했다는 표현이 든 입력 {deletion}건, 전화번호·주민등록번호·이메일이 든 입력 {personal}건, API 키·토큰이 든 입력 {credential}건이 있음(4장).",
+        "{document} input(s) attach a document, {deletion} contain a deletion statement, {personal} contain a phone number, resident number or e-mail address, and {credential} contain an API key or token (chapter 4).",
+    ),
+    "brief.a.no_facts": (
+        "문서 첨부, 삭제 표현, 개인정보, 인증정보가 담긴 입력은 확인되지 않음.",
+        "No input attaches a document or contains a deletion statement, personal data or credentials.",
+    ),
+    "brief.sec.facts": ("주요 입력 사실", "Key Facts in the Inputs"),
+    "brief.facts_intro": (
+        "아래는 입력 원문에 다음 내용이 그대로 들어 있는 입력을 원문에 적힌 사실만으로 나눈 것이며, 판단이나 해석은 더하지 않았음. 전화번호·주민등록번호·이메일·API 키는 일부를 가려 실었음. 입력 원문과 앞뒤 대화는 {volume}에서 같은 번호로 찾을 수 있고, 전체 목록은 {csv}의 facts 열에서 찾을 수 있음.",
+        "Below are inputs whose text itself contains the following, grouped by what the text says without judgement or interpretation. Phone numbers, resident numbers, e-mail addresses and API keys are partly masked. The text and surrounding conversation are in {volume} under the same number; the full list is in {csv} (facts column).",
+    ),
+    "brief.fact.document": ("문서를 첨부한 입력", "Inputs with an attached document"),
+    "brief.fact.deletion": ("삭제했다는 표현이 든 입력", "Inputs stating a deletion"),
+    "brief.fact.personal": (
+        "전화번호·주민등록번호·이메일이 든 입력",
+        "Inputs with a phone number, resident number or e-mail",
+    ),
+    "brief.fact.credential": ("API 키·토큰이 든 입력", "Inputs with an API key or token"),
+    "brief.fact_count": (
+        "해당 입력 {n}건 중 같은 문장을 한 줄로 합쳐 {shown}줄을 실었음. 사람이 쓴 문장을 먼저, 붙여 넣은 명령어·로그를 나중에 두고 각각 시간순으로 배열하였음.",
+        "{n} input(s); identical texts are merged and {shown} are listed, sentences a person wrote first, then pasted commands and logs, each in time order.",
+    ),
     "brief.sec.flagged": ("주의하여 볼 입력", "Inputs to Read Closely"),
     "brief.flagged_intro": (
         "보안 우회나 유출·반출 관련 단어가 들어간 입력은 {n}건이며, 같은 문장을 한 줄로 합쳐 그중 {shown}줄을 실었음. 행위를 요청하거나 지시하는 문장을 먼저, 유출이나 우회를 부인하거나 막으려는 취지의 문장을 다음에, 붙여 넣은 명령어·로그를 마지막에 두고 각각 시간순으로 배열하였음. 부인·방지 취지인지는 문장 표현으로 가린 것이므로 원문으로 확인하여야 함. 전체 목록은 {csv}의 분류 열에서 찾을 수 있음.",

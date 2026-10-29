@@ -215,3 +215,32 @@ def test_report_rerenders_intact_case(evidence: Path, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert (case_dir / "report/csv/timeline.csv").is_file()
     assert CustodyLog(case_dir / "custody.jsonl").verify_chain() is True
+
+
+def test_report_takes_examiner_and_organisation_and_records_them(evidence: Path, tmp_path: Path) -> None:
+    case_dir = tmp_path / "case"
+    code, output = _analyze(evidence, case_dir, "--formats", "json")
+    assert code == 0, output
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "report",
+            "--case-dir",
+            str(case_dir),
+            "--formats",
+            "json",
+            "--examiner",
+            "홍길동",
+            "--org",
+            "감사팀",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    case = json.loads((case_dir / "report/report.json").read_text(encoding="utf-8"))["case"]
+    assert (case["examiner"], case["organisation"]) == ("홍길동", "감사팀")
+    log = CustodyLog(case_dir / "custody.jsonl")
+    assert log.verify_chain() is True
+    request = [e for e in log.entries() if e["action"] == "report_requested"][-1]
+    assert request["detail"]["case_details"] == {"examiner": "홍길동", "organisation": "감사팀"}

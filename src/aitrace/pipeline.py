@@ -5,7 +5,7 @@ import importlib
 import logging
 import shutil
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -568,7 +568,14 @@ def _export(case_dir: Path, store: CaseStore, custody: CustodyLog, opened: list[
     )
 
 
-def report(case_dir: Path, lang: str | None, formats: Sequence[str]) -> PipelineResult:
+def report(
+    case_dir: Path,
+    lang: str | None,
+    formats: Sequence[str],
+    case_details: dict[str, str] | None = None,
+) -> PipelineResult:
+    """Re-render reports. Non-empty `case_details` (name, number, examiner, organisation) replace the values
+    recorded at analysis for this rendering and are written to the custody log."""
     case_dir = case_dir.resolve()
     custody = CustodyLog(case_dir / CUSTODY_FILE)
     db_path = case_dir / CASE_DB
@@ -585,8 +592,13 @@ def report(case_dir: Path, lang: str | None, formats: Sequence[str]) -> Pipeline
         if case is None:
             raise PipelineError(f"{db_path} holds no case record", EXIT_USAGE)
         render_lang = lang or case.lang
+        details = {k: v for k, v in (case_details or {}).items() if v}
+        case = replace(case, **details)
         started = datetime.now(UTC)
-        custody.append(ACTOR, "report_requested", {"lang": render_lang, "formats": list(formats)})
+        request: dict[str, Any] = {"lang": render_lang, "formats": list(formats)}
+        if details:
+            request["case_details"] = details
+        custody.append(ACTOR, "report_requested", request)
         evidences = store.evidences()
         model = build_report_model(
             store,

@@ -10,7 +10,9 @@ from aitrace import __version__, pipeline
 from aitrace.pipeline import AnalyzeOptions, PipelineError, PipelineResult
 from aitrace.plugins.registry import load_plugins
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, help="Forensic AI-usage tracing for disk images.")
+app = typer.Typer(
+    add_completion=False, no_args_is_help=True, help="Forensic AI-usage tracing for disk images."
+)
 
 
 def _formats(value: str) -> tuple[str, ...]:
@@ -109,10 +111,16 @@ def report(
     case_dir: Annotated[Path, typer.Option("--case-dir", help="Existing case directory.")],
     lang: Annotated[str | None, typer.Option("--lang", callback=_lang)] = None,
     formats: Annotated[str, typer.Option("--formats")] = ",".join(pipeline.FORMATS),
+    case_name: Annotated[str, typer.Option("--case-name")] = "",
+    case_number: Annotated[str, typer.Option("--case-number")] = "",
+    examiner: Annotated[str, typer.Option("--examiner")] = "",
+    org: Annotated[str, typer.Option("--org")] = "",
 ) -> None:
-    """Re-render reports from case.sqlite after verifying the custody chain."""
+    """Re-render reports from case.sqlite after verifying the custody chain; case details given here replace
+    the ones entered at analysis for this rendering and are recorded in the custody log."""
+    details = {"name": case_name, "number": case_number, "examiner": examiner, "organisation": org}
     try:
-        result = pipeline.report(case_dir, lang, _formats(formats))
+        result = pipeline.report(case_dir, lang, _formats(formats), details)
     except PipelineError as exc:
         raise _fail(exc) from exc
     _print_result(result)

@@ -26,3 +26,7 @@ jobs:
       - run: uv sync --all-groups --frozen
       - run: uv run ruff check .
       - run: uv run pytest -m "not realdata"
+      - name: Windows run script on the Windows fixture image
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\windows\run.ps1 -Evidence tests\fixtures\images\windows.E01 -CaseDir "$env:RUNNER_TEMP\case" -CaseName ci -Examiner ci -Org ci -NoPrompt -NoOpen

@@ -4,6 +4,10 @@ aitrace reads a disk image and answers the questions an examiner gets asked abou
 
 Korean version: [README.ko.md](README.ko.md)
 
+## Quick start on Windows
+
+Clone or download the repository, double-click `run-windows.bat`, and answer the prompts (evidence path, case name, case number, examiner, organisation). The script installs uv if needed, runs the analysis and opens the `report` folder. Details: [AGENTS.md](AGENTS.md).
+
 ## Purpose
 
 - Inventory AI desktop apps, AI websites, IDE assistants, CLI agents, local models and API keys.

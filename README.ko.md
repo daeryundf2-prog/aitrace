@@ -4,6 +4,15 @@ aitrace는 디스크 이미지를 읽고 컴퓨터의 AI 사용에 대해 감정
 
 English version: [README.md](README.md)
 
+## Windows에서 바로 실행
+
+1. 저장소를 받습니다: `git clone https://github.com/daeryundf2-prog/aitrace.git` (또는 Code → Download ZIP 후 압축 해제)
+2. 받은 폴더의 `run-windows.bat`을 더블클릭합니다.
+3. 증거 이미지(E01) 또는 폴더 경로, 사건명, 사건번호, 분석관 성명, 기관을 입력합니다.
+4. 끝나면 결과 폴더의 `report`가 열립니다(`brief.pdf` 요약서, `report.pdf` 감정서, `questions.html` 사람 입력 목록).
+
+uv가 없으면 스크립트가 설치합니다. 처음 한 번은 인터넷이 필요합니다. 자세한 옵션과 주의 사항은 [AGENTS.md](AGENTS.md)에 있습니다.
+
 ## 목적
 
 - AI 데스크톱 앱, AI 웹사이트, IDE 어시스턴트, CLI 에이전트, 로컬 모델, API 키를 목록화합니다.

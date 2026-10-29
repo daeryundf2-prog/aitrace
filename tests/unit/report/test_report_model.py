@@ -327,7 +327,7 @@ def test_chapters_list_describes_rendered_order(full_store: CaseStore) -> None:
     assert [c["no"] for c in chapters] == [f"제{n}장" for n in range(1, 10)] + ["별첨1", "별첨2", "별첨3"]
     assert chapters[0]["title"] == "개요"
     assert [s["no"] for s in chapters[0]["sections"]] == ["1.", "2.", "3.", "4."]
-    assert chapters[4]["landscape"] is True and chapters[0]["landscape"] is False
+    assert chapters[2]["landscape"] is True and chapters[0]["landscape"] is False
     english = _build(full_store, lang="en").to_dict()["chapters"]
     assert english[0]["no"] == "Chapter 1" and english[0]["title"] == "Overview"
 

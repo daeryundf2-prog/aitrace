@@ -81,9 +81,9 @@ def test_overview_sections() -> None:
     assert [c["landscape"] for c in outline] == [
         False,
         False,
-        False,
-        False,
         True,
+        False,
+        False,
         False,
         False,
         False,

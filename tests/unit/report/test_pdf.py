@@ -57,9 +57,9 @@ def test_header_and_footer_on_body_pages_only(tmp_path: Path) -> None:
 def test_timeline_and_annex_one_are_landscape_and_the_rest_portrait(tmp_path: Path) -> None:
     _, texts, sizes = _render(tmp_path)
     landscape = {i for i, (w, h) in enumerate(sizes) if w > h}
-    assert _page_with(texts, "제5장 타임라인") in landscape
+    assert _page_with(texts, "제3장 타임라인") in landscape
     assert _page_with(texts, "별첨1 추출 자료 목록") in landscape
-    for chapter in ("제4장 생성물", "제6장", "제9장 감정", "별첨3"):
+    for chapter in ("제5장 생성물", "제6장", "제9장 감정", "별첨3"):
         index = max(i for i, text in enumerate(texts) if chapter in text)
         assert index not in landscape, chapter
     assert 0 not in landscape and 1 not in landscape

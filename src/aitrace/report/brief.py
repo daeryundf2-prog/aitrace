@@ -31,7 +31,7 @@ FLAGGED_CAP = 15
 TOP_TOPICS = 3
 WORK_HOURS = range(9, 18)
 # Chapter numbers of the appraisal, in the order layout._build_document emits them.
-APPRAISAL_CHAPTERS = {"overview": 1, "prompts": 3, "generated": 4, "timeline": 5, "limits": 8}
+APPRAISAL_CHAPTERS = {"overview": 1, "timeline": 3, "prompts": 4, "generated": 5, "limits": 8}
 PASTED_CHARS = 400
 # Openings of terminal sessions, file/url mentions and tool output that a person pasted rather than wrote.
 _PASTED_START = re.compile(
@@ -45,8 +45,8 @@ def build_brief_document(model: ReportModel) -> Document:
     lang = model.lang
     b = Builder(lang)
     _conclusion(b, model)
-    _who(b, model)
     _when(b, model)
+    _who(b, model)
     _what(b, model)
     _results(b, model)
     _evidence(b, model)

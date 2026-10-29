@@ -512,8 +512,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "brief.a.not_used": ("AI 도구의 사용 기록은 확인되지 않음.", "No AI tool records were found."),
     "brief.q.devices": ("어느 기기에서 사용하였는가", "On which devices"),
     "brief.a.devices": (
-        "{n}대의 기기에서 사람이 직접 입력한 기록이 있음. 입력이 많은 순서로 {list}임(2장).",
-        "{n} device(s) hold inputs typed by a person, busiest first: {list} (chapter 2).",
+        "{n}대의 기기에서 사람이 직접 입력한 기록이 있음. 입력이 많은 순서로 {list}임(3장).",
+        "{n} device(s) hold inputs typed by a person, busiest first: {list} (chapter 3).",
     ),
     "brief.a.no_devices": (
         "사람이 직접 입력한 기록은 확인되지 않음.",
@@ -522,8 +522,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "brief.machine_count": ("{machine} {n}건", "{machine} {n}"),
     "brief.q.human": ("사람이 직접 입력한 지시는 몇 건인가", "How many inputs did a person type"),
     "brief.a.human": (
-        "{human}건. 대화 기록에 사용자 입력으로 저장된 {raw}건 가운데 다른 기기의 에이전트·하위 AI·예약 작업이 보낸 {ai}건, 자동 반복 지시·시스템 알림 등 {other}건, 같은 내용이 겹쳐 기록된 {dup}건을 뺀 수치임(2장).",
-        "{human}. Of {raw} records stored as user input, {ai} were sent by agents on other devices, sub-agents or scheduled jobs, {other} were automatic repeats or system notices, and {dup} were duplicate records (chapter 2).",
+        "{human}건. 대화 기록에 사용자 입력으로 저장된 {raw}건 가운데 다른 기기의 에이전트·하위 AI·예약 작업이 보낸 {ai}건, 자동 반복 지시·시스템 알림 등 {other}건, 같은 내용이 겹쳐 기록된 {dup}건을 뺀 수치임(3장).",
+        "{human}. Of {raw} records stored as user input, {ai} were sent by agents on other devices, sub-agents or scheduled jobs, {other} were automatic repeats or system notices, and {dup} were duplicate records (chapter 3).",
     ),
     "brief.q.topics": ("주로 무엇을 시켰는가", "What was mostly asked"),
     "brief.topic_count": ("{label} {n}건", "{label} {n}"),
@@ -749,8 +749,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     ),
     "brief.ev.actor": ("행위자 특정", "Identifying the person"),
     "brief.ev.actor_state": (
-        "입력이 들어온 기기와 경로까지 구분하였고, 사람의 입력과 AI·프로그램의 입력을 나누었음(2장).",
-        "Inputs are tied to a device and route, and separated into inputs by a person and by AI or programs (chapter 2).",
+        "입력이 들어온 기기와 경로까지 구분하였고, 사람의 입력과 AI·프로그램의 입력을 나누었음(3장).",
+        "Inputs are tied to a device and route, and separated into inputs by a person and by AI or programs (chapter 3).",
     ),
     "brief.ev.actor_more": (
         "기기를 실제로 사용한 사람은 계정, 기기 관리 관계, 출입·근무 기록, 관련자 진술 등으로 확인하여야 함.",
@@ -871,8 +871,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     ),
     "vol.title": ("별책 프롬프트 전문", "Companion Volume: Full Prompt Text"),
     "vol.intro": (
-        "본 별책은 AI 분석 보고서 본문 제3장에서 발췌한 프롬프트의 전문임. AI 대화 메시지 {m}건과 지시문 {i}건을 도구, 머신(프로필), 세션 순으로 시간순 정리하였으며 원문은 복원된 그대로 표기하였음.",
-        "This volume reproduces the full text excerpted in Chapter 3 of the main report: {m} chat message(s) and {i} instruction(s), grouped by tool, machine (profile) and session in chronological order, as recovered.",
+        "본 별책은 AI 분석 보고서 본문 제4장에서 발췌한 프롬프트의 전문임. AI 대화 메시지 {m}건과 지시문 {i}건을 도구, 머신(프로필), 세션 순으로 시간순 정리하였으며 원문은 복원된 그대로 표기하였음.",
+        "This volume reproduces the full text excerpted in Chapter 4 of the main report: {m} chat message(s) and {i} instruction(s), grouped by tool, machine (profile) and session in chronological order, as recovered.",
     ),
     "vol.back": ("목차로 돌아가기", "Back to the contents"),
     "vol.toc": ("목차", "Contents"),
@@ -941,8 +941,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     "table.item": ("항목", "Item"),
     "table.value": ("내용", "Value"),
     "table.no": ("순번", "No."),
-    "table.caption_tools": ("표 3-1 AI 도구 사용 현황", "Table 3-1 AI tool usage"),
-    "ref.tools_table": ("제3장 표 3-1", "Chapter 3, Table 3-1"),
+    "table.caption_tools": ("표 4-1 AI 도구 사용 현황", "Table 4-1 AI tool usage"),
+    "ref.tools_table": ("제4장 표 4-1", "Chapter 4, Table 4-1"),
     "ref.chapter": ("제{n}장", "Chapter {n}"),
     "ref.section": ("제{n}장 {s}", "Chapter {n}, Section {s}"),
     "ref.sections": ("제{n}장 {s1}, {s2}", "Chapter {n}, Sections {s1} and {s2}"),
@@ -1056,8 +1056,8 @@ _LAYOUT: dict[str, tuple[str, str]] = {
     ),
     "vol.generated": ("AI 생성 판정 전체 목록", "All Items Judged AI-Generated"),
     "vol.generated_intro": (
-        "본문 제4장의 판정 대상 {n}건 전체임. 산출물 원문은 근거 경로의 원본 자료에 있음.",
-        "All {n} judged item(s) from Chapter 4 of the main report. The output text itself is in the source named under Basis.",
+        "본문 제5장의 판정 대상 {n}건 전체임. 산출물 원문은 근거 경로의 원본 자료에 있음.",
+        "All {n} judged item(s) from Chapter 5 of the main report. The output text itself is in the source named under Basis.",
     ),
     "instr.note_split": (
         "페르소나·규칙·메모리 파일과 고유 시스템 프롬프트 {n}종은 아래에 개별로 표시하였음. 스킬, 작업공간 지시문, 템플릿, 설정 파일 등 {m}종은 종류와 상위 디렉터리별 건수만 표로 정리하였으며, 각 파일의 전문은 {volume}에 수록하였음.",

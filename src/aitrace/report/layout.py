@@ -461,6 +461,14 @@ def _statements(model: ReportModel) -> list[str]:
         )
     else:
         out.append(t("stmt.tools_none", lang) + _cite(lang, tools_ref))
+    timeline_ref = t("ref.chapter", lang, n=3)
+    if f.timeline_n:
+        out.append(
+            t("stmt.timeline", lang, n=f.timeline_n, first=f.first, last=f.last, ai=f.ai_events)
+            + _cite(lang, timeline_ref)
+        )
+    else:
+        out.append(t("stmt.timeline_none", lang) + _cite(lang, timeline_ref))
     total = len(model.ai_queries)
     if total or f.calls or model.instructions:
         out.append(
@@ -474,11 +482,11 @@ def _statements(model: ReportModel) -> list[str]:
                 c=f.calls,
                 i=len(model.instructions),
             )
-            + _cite(lang, t("ref.range", lang, n=3, s1="1.", s2="4."))
+            + _cite(lang, t("ref.range", lang, n=4, s1="1.", s2="4."))
         )
     else:
-        out.append(t("stmt.messages_none", lang) + _cite(lang, t("ref.chapter", lang, n=3)))
-    chapter4 = t("ref.chapter", lang, n=4)
+        out.append(t("stmt.messages_none", lang) + _cite(lang, t("ref.chapter", lang, n=4)))
+    generated_ref = t("ref.chapter", lang, n=5)
     if model.generated_files:
         g = f.generated
         out.append(
@@ -490,18 +498,10 @@ def _statements(model: ReportModel) -> list[str]:
                 a=g["ai_assisted"],
                 u=g["undetermined"],
             )
-            + _cite(lang, chapter4)
+            + _cite(lang, generated_ref)
         )
     else:
-        out.append(t("stmt.generated_none", lang) + _cite(lang, chapter4))
-    chapter5 = t("ref.chapter", lang, n=5)
-    if f.timeline_n:
-        out.append(
-            t("stmt.timeline", lang, n=f.timeline_n, first=f.first, last=f.last, ai=f.ai_events)
-            + _cite(lang, chapter5)
-        )
-    else:
-        out.append(t("stmt.timeline_none", lang) + _cite(lang, chapter5))
+        out.append(t("stmt.generated_none", lang) + _cite(lang, generated_ref))
     chapter6 = t("ref.chapter", lang, n=6)
     if f.changes:
         out.append(t("stmt.changes", lang, n=f.changes, d=f.deleted) + _cite(lang, chapter6))
@@ -531,15 +531,15 @@ def _opinions(model: ReportModel) -> list[str]:
     if f.tool_names:
         out.append(
             t("opin.tools", lang, names=_names(f.tool_names))
-            + _cite(lang, t("ref.tools_table", lang), t("ref.range", lang, n=3, s1="1.", s2="4."))
+            + _cite(lang, t("ref.tools_table", lang), t("ref.range", lang, n=4, s1="1.", s2="4."))
         )
     else:
         out.append(t("opin.tools_none", lang) + _cite(lang, t("ref.tools_table", lang)))
     judged = f.generated["ai_generated"] + f.generated["ai_assisted"]
     if model.generated_files:
-        out.append(t("opin.generated", lang, n=judged) + _cite(lang, t("ref.chapter", lang, n=4)))
+        out.append(t("opin.generated", lang, n=judged) + _cite(lang, t("ref.chapter", lang, n=5)))
     else:
-        out.append(t("opin.generated_none", lang) + _cite(lang, t("ref.chapter", lang, n=4)))
+        out.append(t("opin.generated_none", lang) + _cite(lang, t("ref.chapter", lang, n=5)))
     transfer_key = "opin.transfer" if f.changes or model.exfil else "opin.transfer_none"
     out.append(
         t(transfer_key, lang, n=f.changes, m=len(model.exfil))
@@ -1300,7 +1300,7 @@ def _generated_jobs(b: _Builder, model: ReportModel) -> None:
 
 
 def generated_shown(files: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """Rows chapter 4 lists: every item without a record time, then the most recent, in time order."""
+    """Rows chapter 5 lists: every item without a record time, then the most recent, in time order."""
     untimed = [r for r in files if not r.get("ts_utc")]
     timed = sorted((r for r in files if r.get("ts_utc")), key=lambda r: str(r["ts_utc"]), reverse=True)
     chosen = [*untimed, *timed][:GENERATED_ROW_CAP]
@@ -1637,9 +1637,9 @@ def _build_document(model: ReportModel, timeline_limit: int) -> Document:
     b.chapter(t("chapter.summary", lang))
     for line in _numbered(_statements(model)):
         b.para(line)
+    _timeline(b, model, timeline_limit)
     _prompts(b, model)
     _generated(b, model)
-    _timeline(b, model, timeline_limit)
     b.chapter(t("chapter.changes", lang))
     _spec_table(b, "file_lifecycle", model.lifecycle_rows())
     if model.lifecycle_hidden:

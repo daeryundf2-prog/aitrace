@@ -26,9 +26,9 @@ NOT_EXPORTED_NOTE = "source not found or not a regular file"
 CHAPTER_KEYS: tuple[str, ...] = (
     "chapter.overview",
     "chapter.summary",
+    "chapter.timeline",
     "chapter.prompts",
     "chapter.generated",
-    "chapter.timeline",
     "chapter.changes",
     "chapter.transfer",
     "chapter.limits",
